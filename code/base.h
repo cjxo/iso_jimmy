@@ -13,6 +13,7 @@ typedef s32 b32;
 typedef float f32;
 #define true 1
 #define false 0
+#define null 0
 
 #define function static
 #define global_variable static
@@ -49,6 +50,8 @@ typedef struct
   u64 stack_ptr;
 } M_Temp;
 
+#define M_Arena_PushArray(a,T,c) (T*)m_arena_push((a),sizeof(T)*(c))
+#define M_Arena_PushStruct(a,T) M_Arena_PushArray(a,T,1)
 function M_Arena *m_arena_reserve(u64 cap);
 function void *   m_arena_push(M_Arena *arena, u64 size);
 function void     m_arena_pop(M_Arena *arena, u64 size);

@@ -2,54 +2,92 @@
 #define COBJMACROS
 #define NOMINMAX
 #include <windows.h>
+#include <timeapi.h>
 #include <d3d11.h>
+#include <d3d11_1.h>
 #include <dxgi.h>
 #include <dxgi1_2.h>
+#include <d3dcompiler.h>
 #if defined(ISO_DEBUG)
 # include <dxgidebug.h>
 #endif
 
+#include <math.h>
 #include "base.h"
-#include "base.c"
+#include "windows_stuff.h"
+#include "my_math.h"
 
-function LRESULT __stdcall
-w32_window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam)
-{
-  LRESULT result = 0;
-  
-  switch (message)
-  {
-    case WM_CLOSE:
-    {
-      DestroyWindow(window);
-    } break;
-    
-    case WM_DESTROY:
-    {
-      ExitProcess(0);
-    } break;
-    
-    default:
-    {
-      result = DefWindowProc(window, message, wparam, lparam);
-    } break;
-  }
-  
-  return(result);
-}
+#include "base.c"
+#include "windows_stuff.c"
+#include "my_math.c"
 
 typedef struct
 {
-  HWND handle;
-  s32 client_width, client_height;
-} W32_Window;
+  m44 proj;
+  m44 world_to_camera;
+} DX11_VertexShader_Constants;
+
+typedef struct
+{
+  v3f v;
+  v3f t, b, n;
+  v2f uv;
+} R_Game_Vertex;
+
+typedef struct
+{
+  ID3D11VertexShader *vertex;
+  ID3D11PixelShader *pixel;
+} R_Shader;
+
+typedef struct
+{
+  ID3D11Buffer *vertices;
+  ID3D11Buffer *indices;
+  UINT struct_size;
+  UINT indices_count;
+} R_Model;
+
+typedef struct
+{
+  v3f p;
+  v3f scale;
+  // v4f quaterion;
+  v4f colour;
+} R_Model_Instance;
+
+typedef struct
+{
+  R_Model_Instance *ins;
+  u64 capacity;
+  u64 count;
+} R_Model_Instances;
 
 typedef struct
 {
   ID3D11Device *device;
+  ID3D11Device1 *device1;
   ID3D11DeviceContext *device_context;
+  
+  s32 back_buffer_width, back_buffer_height;
   IDXGISwapChain1 *swap_chain;
   ID3D11RenderTargetView *back_buffer_rtv;
+  ID3D11DepthStencilView *main_dsv;
+  
+  ID3D11RasterizerState *raster_fill_cull_ccw;
+  ID3D11RasterizerState *raster_wire_cull_ccw;
+  ID3D11DepthStencilState *ds_depth_only;
+  ID3D11BlendState1 *blend_state_transparency;
+  
+  ID3D11Buffer *game_cbuffer;
+  ID3D11Buffer *game_sbuffer;
+  ID3D11ShaderResourceView *game_sbuffer_srv;
+  
+  R_Model cube_model;
+  R_Shader game_shader;
+  ID3D11InputLayout *game_input_layput;
+  
+  R_Model_Instances model_instances;
 } R_State;
 
 function void
@@ -66,31 +104,39 @@ dx11_create_device(R_State *renderer_state)
                          D3D11_SDK_VERSION, &renderer_state->device, 0, &renderer_state->device_context);
   if (SUCCEEDED(hr))
   {
+    hr = ID3D11DeviceContext_QueryInterface(renderer_state->device, &IID_ID3D11Device1, &renderer_state->device1);
+    if (SUCCEEDED(hr))
+    {
 #if defined(ISO_DEBUG)
-    // https://walbourn.github.io/dxgi-debug-device/
-    ID3D11InfoQueue *dx11_info_queue;
-    hr = ID3D11Device_QueryInterface(renderer_state->device, &IID_ID3D11InfoQueue, &dx11_info_queue);
-    Assert(SUCCEEDED(hr));
-    
-    ID3D11InfoQueue_SetBreakOnSeverity(dx11_info_queue, D3D11_MESSAGE_SEVERITY_CORRUPTION, TRUE);
-    ID3D11InfoQueue_SetBreakOnSeverity(dx11_info_queue, D3D11_MESSAGE_SEVERITY_ERROR, TRUE);
-    ID3D11InfoQueue_Release(dx11_info_queue);
-    
-    typedef HRESULT (WINAPI*T_DXGIGetDebugInterface)(REFIID, void **);
-    HMODULE module = GetModuleHandle("Dxgidebug.dll");
-    Assert(module != 0);
-    T_DXGIGetDebugInterface fn = (T_DXGIGetDebugInterface)GetProcAddress(module, "DXGIGetDebugInterface");
-    Assert(fn);
-    
-    IDXGIInfoQueue *dxgi_info_queue = 0;
-    hr = fn(&IID_IDXGIInfoQueue, &dxgi_info_queue);
-    Assert(SUCCEEDED(hr));
-    
-    IDXGIInfoQueue_SetBreakOnSeverity(dxgi_info_queue, DXGI_DEBUG_ALL, DXGI_INFO_QUEUE_MESSAGE_SEVERITY_CORRUPTION, TRUE);
-    IDXGIInfoQueue_SetBreakOnSeverity(dxgi_info_queue, DXGI_DEBUG_ALL, DXGI_INFO_QUEUE_MESSAGE_SEVERITY_ERROR, TRUE);
-    IDXGIInfoQueue_Release(dxgi_info_queue);
-    FreeLibrary(module);
+      // https://walbourn.github.io/dxgi-debug-device/
+      ID3D11InfoQueue *dx11_info_queue;
+      hr = ID3D11Device_QueryInterface(renderer_state->device, &IID_ID3D11InfoQueue, &dx11_info_queue);
+      Assert(SUCCEEDED(hr));
+      
+      ID3D11InfoQueue_SetBreakOnSeverity(dx11_info_queue, D3D11_MESSAGE_SEVERITY_CORRUPTION, TRUE);
+      ID3D11InfoQueue_SetBreakOnSeverity(dx11_info_queue, D3D11_MESSAGE_SEVERITY_ERROR, TRUE);
+      ID3D11InfoQueue_Release(dx11_info_queue);
+      
+      typedef HRESULT (WINAPI*T_DXGIGetDebugInterface)(REFIID, void **);
+      HMODULE module = GetModuleHandle("Dxgidebug.dll");
+      Assert(module != 0);
+      T_DXGIGetDebugInterface fn = (T_DXGIGetDebugInterface)GetProcAddress(module, "DXGIGetDebugInterface");
+      Assert(fn);
+      
+      IDXGIInfoQueue *dxgi_info_queue = 0;
+      hr = fn(&IID_IDXGIInfoQueue, &dxgi_info_queue);
+      Assert(SUCCEEDED(hr));
+      
+      IDXGIInfoQueue_SetBreakOnSeverity(dxgi_info_queue, DXGI_DEBUG_ALL, DXGI_INFO_QUEUE_MESSAGE_SEVERITY_CORRUPTION, TRUE);
+      IDXGIInfoQueue_SetBreakOnSeverity(dxgi_info_queue, DXGI_DEBUG_ALL, DXGI_INFO_QUEUE_MESSAGE_SEVERITY_ERROR, TRUE);
+      IDXGIInfoQueue_Release(dxgi_info_queue);
+      FreeLibrary(module);
 #endif
+    }
+    else
+    {
+      Assert(!"TODO: Logging");
+    }
   }
   else
   {
@@ -99,7 +145,7 @@ dx11_create_device(R_State *renderer_state)
 }
 
 function void
-dx11_create_swap_chain(R_State *renderer_state, W32_Window window)
+dx11_create_swap_chain(R_State *renderer_state, OS_Window window)
 {
   HRESULT hr;
   IDXGIDevice2 *dxgi_device;
@@ -150,6 +196,8 @@ dx11_create_swap_chain(R_State *renderer_state, W32_Window window)
             
             if (SUCCEEDED(hr))
             {
+              renderer_state->back_buffer_width = window.client_width;
+              renderer_state->back_buffer_height = window.client_height;
             }
             else
             {
@@ -186,82 +234,558 @@ dx11_create_swap_chain(R_State *renderer_state, W32_Window window)
 }
 
 function void
-r_init(R_State *renderer_state, W32_Window window)
+dx11_create_rasterizer_states(R_State *state)
+{
+  D3D11_RASTERIZER_DESC desc;
+  desc.FillMode = D3D11_FILL_SOLID;
+  desc.CullMode = D3D11_CULL_BACK;
+  desc.FrontCounterClockwise = TRUE;
+  desc.DepthBias = 0;
+  desc.DepthBiasClamp = 0.0f;
+  desc.SlopeScaledDepthBias = 0.0f;
+  desc.DepthClipEnable = TRUE;
+  desc.ScissorEnable = FALSE;
+  desc.MultisampleEnable = FALSE;
+  desc.AntialiasedLineEnable = FALSE;
+  HRESULT hr = ID3D11Device_CreateRasterizerState(state->device, &desc, &state->raster_fill_cull_ccw);
+  if (SUCCEEDED(hr))
+  {
+    desc.FillMode = D3D11_FILL_WIREFRAME;
+    hr = ID3D11Device_CreateRasterizerState(state->device, &desc, &state->raster_wire_cull_ccw);
+    if (SUCCEEDED(hr))
+    {
+    }
+    else
+    {
+      Assert(!"TODO: Logging");
+    }
+  }
+  else
+  {
+    Assert(!"TODO: Logging");
+  }
+}
+
+function void
+dx11_create_depth_stencil_states(R_State *state)
+{
+  ID3D11Texture2D *tex = 0;
+  D3D11_TEXTURE2D_DESC tex_desc;
+  D3D11_DEPTH_STENCIL_DESC dsv_desc = {0};
+  HRESULT hr;
+  
+  tex_desc.Width = state->back_buffer_width;
+  tex_desc.Height = state->back_buffer_height;
+  tex_desc.MipLevels = 1;
+  tex_desc.ArraySize = 1;
+  tex_desc.Format = DXGI_FORMAT_D24_UNORM_S8_UINT;
+  tex_desc.SampleDesc.Count = 1;
+  tex_desc.SampleDesc.Quality = 0;
+  tex_desc.Usage = D3D11_USAGE_DEFAULT;
+  tex_desc.BindFlags = D3D11_BIND_DEPTH_STENCIL;
+  tex_desc.CPUAccessFlags = 0;
+  tex_desc.MiscFlags = 0;
+  hr = ID3D11Device_CreateTexture2D(state->device, &tex_desc, 0, &tex);
+  
+  if (SUCCEEDED(hr))
+  {
+    hr = ID3D11Device_CreateDepthStencilView(state->device, (ID3D11Resource *)tex, 0, &state->main_dsv);
+    if (SUCCEEDED(hr))
+    {
+      dsv_desc.DepthEnable = TRUE;
+      dsv_desc.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ALL;
+      dsv_desc.DepthFunc = D3D11_COMPARISON_LESS;
+      hr = ID3D11Device_CreateDepthStencilState(state->device, &dsv_desc, &state->ds_depth_only);
+      if (SUCCEEDED(hr))
+      {
+      }
+      else
+      {
+        Assert(!"TODO: Logging");
+      }
+    }
+    else
+    {
+      Assert(!"TODO: Logging");
+    }
+    
+    ID3D11Device_Release(tex);
+  }
+  else
+  {
+    Assert(!"TODO: Logging");
+  }
+}
+
+function void
+dx11_create_blend_states(R_State *state)
+{
+  D3D11_BLEND_DESC1 desc = {0};
+  HRESULT hr;
+  
+  desc.IndependentBlendEnable = FALSE;
+  desc.RenderTarget->BlendEnable = TRUE;
+  desc.RenderTarget->LogicOpEnable = FALSE;
+  desc.RenderTarget->SrcBlend = D3D11_BLEND_SRC_ALPHA;
+  desc.RenderTarget->DestBlend = D3D11_BLEND_INV_SRC_ALPHA;
+  desc.RenderTarget->BlendOp = D3D11_BLEND_OP_ADD;
+  desc.RenderTarget->SrcBlendAlpha = D3D11_BLEND_SRC_ALPHA;
+  desc.RenderTarget->DestBlendAlpha = D3D11_BLEND_INV_SRC_ALPHA;
+  desc.RenderTarget->BlendOpAlpha = D3D11_BLEND_OP_ADD;
+  desc.RenderTarget->LogicOp = D3D11_LOGIC_OP_NOOP;
+  desc.RenderTarget->RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
+  hr = ID3D11Device1_CreateBlendState1(state->device1, &desc, &state->blend_state_transparency);
+  if (SUCCEEDED(hr))
+  {
+  }
+  else
+  {
+    Assert(!"TODO: Logging");
+  }
+}
+
+#if ISO_DEBUG
+# define DX11_ShaderFlags (D3DCOMPILE_SKIP_OPTIMIZATION|D3DCOMPILE_ENABLE_STRICTNESS|D3DCOMPILE_WARNINGS_ARE_ERRORS)
+#else
+# define DX11_ShaderFlags (D3DCOMPILE_OPTIMIZATION_LEVEL3|D3DCOMPILE_ENABLE_STRICTNESS)
+#endif
+function R_Shader
+dx11_create_shaders_with_input_layout(ID3D11Device *device, LPCWSTR file, char *vshader_entry, char *pshader_entry,
+                                      D3D11_INPUT_ELEMENT_DESC *input_elements, u32 input_elements_count,
+                                      ID3D11InputLayout **il_out)
+{
+  ID3D10Blob *bytecode, *error;
+  HRESULT hr;
+  
+  R_Shader result={0};
+  hr = D3DCompileFromFile(file, null, D3D_COMPILE_STANDARD_FILE_INCLUDE,
+                          vshader_entry, "vs_5_0", DX11_ShaderFlags, 0, &bytecode, &error);
+  if (SUCCEEDED(hr))
+  {
+    hr = ID3D11Device_CreateVertexShader(device, ID3D10Blob_GetBufferPointer(bytecode), 
+                                         ID3D10Blob_GetBufferSize(bytecode), 0, &result.vertex);
+    
+    
+    if (SUCCEEDED(hr))
+    {
+      hr = ID3D11Device_CreateInputLayout(device, input_elements, input_elements_count,
+                                          ID3D10Blob_GetBufferPointer(bytecode), 
+                                          ID3D10Blob_GetBufferSize(bytecode), il_out);
+      ID3D10Blob_Release(bytecode);
+      if (SUCCEEDED(hr))
+      {
+        hr = D3DCompileFromFile(file, null, D3D_COMPILE_STANDARD_FILE_INCLUDE,
+                                pshader_entry, "ps_5_0", DX11_ShaderFlags, 0, &bytecode, &error);
+        
+        
+        if (SUCCEEDED(hr))
+        {
+          hr = ID3D11Device_CreatePixelShader(device, ID3D10Blob_GetBufferPointer(bytecode), 
+                                              ID3D10Blob_GetBufferSize(bytecode), 0, &result.pixel);
+          
+          ID3D10Blob_Release(bytecode);
+        }
+        else
+        {
+          OutputDebugStringA(ID3D10Blob_GetBufferPointer(error));
+          Assert(!"TODO: Logging");
+        }
+      }
+      else
+      {
+        Assert(!"TODO: Logging");
+      }
+    }
+    else
+    {
+      Assert(!"TODO: Logging");
+    }
+  }
+  else
+  {
+    OutputDebugStringA(ID3D10Blob_GetBufferPointer(error));
+    Assert(!"TODO: Logging");
+  }
+  
+  return(result);
+}
+
+function R_Model
+dx11_create_model(ID3D11Device *device,
+                  f32 *vertices, u32 vertices_size, u32 vertex_struct_size,
+                  u32 *indices, u32 indices_count)
+{
+  R_Model result = {0};
+  HRESULT hr;
+  D3D11_BUFFER_DESC buffer_desc={0};
+  D3D11_SUBRESOURCE_DATA subrec_data={0};
+  
+  buffer_desc.ByteWidth = vertices_size;
+  buffer_desc.Usage = D3D11_USAGE_IMMUTABLE;
+  buffer_desc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
+  buffer_desc.CPUAccessFlags = 0;
+  buffer_desc.MiscFlags = 0;
+  buffer_desc.StructureByteStride = 0;
+  
+  subrec_data.pSysMem = vertices;
+  subrec_data.SysMemPitch = vertex_struct_size;
+  subrec_data.SysMemSlicePitch = 0;
+  hr = ID3D11Device_CreateBuffer(device, &buffer_desc, &subrec_data, &result.vertices);
+  
+  if (SUCCEEDED(hr))
+  {
+    buffer_desc.ByteWidth = indices_count * sizeof(u32);
+    buffer_desc.Usage = D3D11_USAGE_IMMUTABLE;
+    buffer_desc.BindFlags = D3D11_BIND_INDEX_BUFFER;
+    buffer_desc.CPUAccessFlags = 0;
+    buffer_desc.MiscFlags = 0;
+    buffer_desc.StructureByteStride = 0;
+    
+    subrec_data.pSysMem = indices;
+    subrec_data.SysMemPitch = sizeof(u32);
+    subrec_data.SysMemSlicePitch = 0;
+    
+    hr = ID3D11Device_CreateBuffer(device, &buffer_desc, &subrec_data, &result.indices);
+    if (SUCCEEDED(hr))
+    {
+      result.indices_count = indices_count;
+      result.struct_size = vertex_struct_size;
+    }
+    else
+    {
+      Assert(!"TODO: Logging");
+    }
+  }
+  else
+  {
+    Assert(!"TODO: Logging");
+  }
+  
+  return(result);
+}
+
+function void
+dx11_create_game_state(R_State *state, M_Arena *arena)
+{
+  HRESULT hr;
+  D3D11_BUFFER_DESC buffer_desc;
+  D3D11_SHADER_RESOURCE_VIEW_DESC srv_desc;
+  
+  D3D11_INPUT_ELEMENT_DESC il_desc[] =
+  {
+    { "IA_Vertex", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, D3D11_APPEND_ALIGNED_ELEMENT , D3D11_INPUT_PER_VERTEX_DATA, 0 },
+    { "IA_Tangent", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, D3D11_APPEND_ALIGNED_ELEMENT , D3D11_INPUT_PER_VERTEX_DATA, 0 },
+    { "IA_Bitangent", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, D3D11_APPEND_ALIGNED_ELEMENT , D3D11_INPUT_PER_VERTEX_DATA, 0 },
+    { "IA_Normal", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, D3D11_APPEND_ALIGNED_ELEMENT , D3D11_INPUT_PER_VERTEX_DATA, 0 },
+    { "IA_UV", 0, DXGI_FORMAT_R32G32_FLOAT, 0, D3D11_APPEND_ALIGNED_ELEMENT , D3D11_INPUT_PER_VERTEX_DATA, 0 },
+  };
+  
+  state->game_shader = dx11_create_shaders_with_input_layout(state->device, L"..\\code\\shaders\\game.hlsl",
+                                                             "vs_main", "ps_main",
+                                                             il_desc,
+                                                             ArrayCount(il_desc),
+                                                             &state->game_input_layput);
+  
+  // p <-> tangent <-> bitangent <-> normal <-> uv
+  f32 cube_vbuffer[] =
+  {
+    // front face
+    -0.5f, +0.5f, -0.5f,      +1.0f, +0.0f, +0.0f,    +0.0f, 1.0f, 0.0f,     +0.0f, +0.0f, -1.0f,         0.0f, 0.0f,
+    -0.5f, -0.5f, -0.5f,      +1.0f, +0.0f, +0.0f,    +0.0f, 1.0f, 0.0f,     +0.0f, +0.0f, -1.0f,         0.0f, 1.0f,
+    +0.5f, -0.5f, -0.5f,      +1.0f, +0.0f, +0.0f,    +0.0f, 1.0f, 0.0f,     +0.0f, +0.0f, -1.0f,         1.0f, 1.0f,
+    +0.5f, +0.5f, -0.5f,      +1.0f, +0.0f, +0.0f,    +0.0f, 1.0f, 0.0f,     +0.0f, +0.0f, -1.0f,         1.0f, 0.0f,
+    
+    // right face
+    +0.5f, +0.5f, -0.5f,     +0.0f, +0.0f, +1.0f,     +0.0f, +1.0f, 0.0f,    +1.0f, +0.0f, +0.0f,     0.0f, 0.0f,
+    +0.5f, -0.5f, -0.5f,     +0.0f, +0.0f, +1.0f,     +0.0f, +1.0f, 0.0f,    +1.0f, +0.0f, +0.0f,     0.0f, 1.0f,
+    +0.5f, -0.5f, +0.5f,     +0.0f, +0.0f, +1.0f,     +0.0f, +1.0f, 0.0f,    +1.0f, +0.0f, +0.0f,     1.0f, 1.0f,
+    +0.5f, +0.5f, +0.5f,     +0.0f, +0.0f, +1.0f,     +0.0f, +1.0f, 0.0f,    +1.0f, +0.0f, +0.0f,     1.0f, 0.0f,
+    
+    // back face
+    +0.5f, +0.5f, +0.5f,     -1.0f, +0.0f, +0.0f,     +0.0f, +1.0f, +0.0f,   +0.0f, +0.0f, +1.0f,     0.0f, 0.0f,
+    +0.5f, -0.5f, +0.5f,     -1.0f, +0.0f, +0.0f,     +0.0f, +1.0f, +0.0f,   +0.0f, +0.0f, +1.0f,     0.0f, 1.0f,
+    -0.5f, -0.5f, +0.5f,     -1.0f, +0.0f, +0.0f,     +0.0f, +1.0f, +0.0f,   +0.0f, +0.0f, +1.0f,     1.0f, 1.0f,
+    -0.5f, +0.5f, +0.5f,     -1.0f, +0.0f, +0.0f,     +0.0f, +1.0f, +0.0f,   +0.0f, +0.0f, +1.0f,     1.0f, 0.0f,
+    
+    // left face
+    -0.5f, +0.5f, +0.5f,     +0.0f, +0.0f, -1.0f,     +0.0f, +1.0f, +0.0f,   -1.0f, +0.0f, +0.0f,     0.0f, 0.0f,
+    -0.5f, -0.5f, +0.5f,     +0.0f, +0.0f, -1.0f,     +0.0f, +1.0f, +0.0f,   -1.0f, +0.0f, +0.0f,     0.0f, 1.0f,
+    -0.5f, -0.5f, -0.5f,     +0.0f, +0.0f, -1.0f,     +0.0f, +1.0f, +0.0f,   -1.0f, +0.0f, +0.0f,     1.0f, 1.0f,
+    -0.5f, +0.5f, -0.5f,     +0.0f, +0.0f, -1.0f,     +0.0f, +1.0f, +0.0f,   -1.0f, +0.0f, +0.0f,     1.0f, 0.0f,
+    
+    // top face
+    -0.5f, +0.5f, +0.5f,     +1.0f, +0.0f, +0.0f,     +0.0f, +0.0f, +1.0f,   +0.0f, +1.0f, +0.0f,     0.0f, 0.0f,
+    -0.5f, +0.5f, -0.5f,     +1.0f, +0.0f, +0.0f,     +0.0f, +0.0f, +1.0f,   +0.0f, +1.0f, +0.0f,     0.0f, 1.0f,
+    +0.5f, +0.5f, -0.5f,     +1.0f, +0.0f, +0.0f,     +0.0f, +0.0f, +1.0f,   +0.0f, +1.0f, +0.0f,     1.0f, 1.0f,
+    +0.5f, +0.5f, +0.5f,     +1.0f, +0.0f, +0.0f,     +0.0f, +0.0f, +1.0f,   +0.0f, +1.0f, +0.0f,     1.0f, 0.0f,
+    
+    // bottom face
+    -0.5f, -0.5f, -0.5f,     +1.0f, +0.0f, +0.0f,     +0.0f, +0.0f, -1.0f,   +0.0f, -1.0f, +0.0f,     0.0f, 0.0f,
+    -0.5f, -0.5f, +0.5f,     +1.0f, +0.0f, +0.0f,     +0.0f, +0.0f, -1.0f,   +0.0f, -1.0f, +0.0f,     0.0f, 1.0f,
+    +0.5f, -0.5f, +0.5f,     +1.0f, +0.0f, +0.0f,     +0.0f, +0.0f, -1.0f,   +0.0f, -1.0f, +0.0f,     1.0f, 1.0f,
+    +0.5f, -0.5f, -0.5f,     +1.0f, +0.0f, +0.0f,     +0.0f, +0.0f, -1.0f,   +0.0f, -1.0f, +0.0f,     1.0f, 0.0f,
+  };
+  
+  u32 cube_ibuffer[] = {
+    0, 1, 2,
+    2, 3, 0,
+    
+    4, 5, 6,
+    6, 7, 4,
+    
+    8, 9, 10,
+    10, 11, 8,
+    
+    12, 13, 14,
+    14, 15, 12,
+    
+    16, 17, 18,
+    18, 19, 16,
+    
+    20, 21, 22,
+    22, 23, 20,
+  };
+  
+  state->cube_model = dx11_create_model(state->device,
+                                        cube_vbuffer, sizeof(cube_vbuffer), sizeof(R_Game_Vertex),
+                                        cube_ibuffer, ArrayCount(cube_ibuffer));
+  
+  buffer_desc.ByteWidth = (sizeof(DX11_VertexShader_Constants)+15)&(~15);
+  buffer_desc.Usage = D3D11_USAGE_DYNAMIC;
+  buffer_desc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+  buffer_desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+  buffer_desc.MiscFlags = 0;
+  buffer_desc.StructureByteStride = 0;
+  
+  hr = ID3D11Device_CreateBuffer(state->device, &buffer_desc, 0, &state->game_cbuffer);
+  if (SUCCEEDED(hr))
+  {
+    state->model_instances.capacity = 2048;
+    state->model_instances.count = 0;
+    state->model_instances.ins = M_Arena_PushArray(arena, R_Model_Instance, state->model_instances.capacity);
+    
+    buffer_desc.ByteWidth = (UINT)(sizeof(R_Model_Instance)*state->model_instances.capacity);
+    buffer_desc.Usage = D3D11_USAGE_DYNAMIC;
+    buffer_desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+    buffer_desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+    buffer_desc.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
+    buffer_desc.StructureByteStride = sizeof(R_Model_Instance);
+    
+    hr = ID3D11Device_CreateBuffer(state->device, &buffer_desc, 0, &state->game_sbuffer);
+    if (SUCCEEDED(hr))
+    {
+      srv_desc.Format = DXGI_FORMAT_UNKNOWN;
+      srv_desc.ViewDimension = D3D11_SRV_DIMENSION_BUFFER;
+      srv_desc.Buffer.ElementOffset = 0;
+      srv_desc.Buffer.NumElements = (UINT)state->model_instances.capacity;
+      hr = ID3D11Device_CreateShaderResourceView(state->device, (ID3D11Resource *)state->game_sbuffer, &srv_desc, &state->game_sbuffer_srv);
+      if (SUCCEEDED(hr))
+      {
+      }
+      else
+      {
+        Assert(!"TODO: Logging");
+      }
+    }
+    else
+    {
+      Assert(!"TODO: Logging");
+    }
+  }
+  else
+  {
+    Assert(!"TODO: Logging");
+  }
+}
+
+function void
+r_init(R_State *renderer_state, OS_Window window, M_Arena *arena)
 {
   dx11_create_device(renderer_state);
   dx11_create_swap_chain(renderer_state, window);
+  dx11_create_rasterizer_states(renderer_state);
+  dx11_create_depth_stencil_states(renderer_state);
+  dx11_create_blend_states(renderer_state);
+  dx11_create_game_state(renderer_state, arena);
 }
 
-int __stdcall WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PSTR lpCmd, int nShowCmd)
+function R_Model_Instance *
+r_model_add_instance(R_Model_Instances *instances, v3f p, v3f scale, v4f colour)
+{
+  Assert(instances->count < instances->capacity);
+  R_Model_Instance *result = instances->ins + instances->count++;
+  result->p = p;
+  result->scale = scale;
+  result->colour = colour;
+  return(result);
+}
+
+int __stdcall
+WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PSTR lpCmd, int nShowCmd)
 {
   (void)hInstance;
   (void)hPrevInstance;
   (void)lpCmd;
   (void)nShowCmd;
   
-  WNDCLASSEXA wnd_class =
-  {
-    .cbSize = sizeof(WNDCLASSEX),
-    .style = CS_OWNDC,
-    .lpfnWndProc = w32_window_proc,
-    .cbClsExtra = 0,
-    .cbWndExtra = 0,
-    .hInstance = hInstance,
-    .hIcon = LoadIconA(0, IDI_APPLICATION),
-    .hCursor = LoadCursorA(0, IDC_ARROW),
-    .hbrBackground = GetStockObject(BLACK_BRUSH),
-    .lpszMenuName = 0,
-    .lpszClassName = "iso_jimmy_class",
-    .hIconSm = 0,
-  };
+  SetProcessDPIAware();
   
-  if (RegisterClassExA(&wnd_class))
+  timeBeginPeriod(1);
+  
+  DEVMODE dev_mode;
+  EnumDisplaySettingsA(0, ENUM_CURRENT_SETTINGS, &dev_mode);
+  u64 refresh_rate = dev_mode.dmDisplayFrequency;
+  f32 seconds_per_frame = 1.0f / (f32)refresh_rate;
+  
+  OS_Window window;
+  os_create_window(&window, "Iso Jimmy", 1280, 720);
+  
+  OS_Input *input = &(window.input);
+  
+  M_Arena *arena = m_arena_reserve(MB(4));
+  R_State renderer_state;
+  r_init(&renderer_state, window, arena);
+  
+  v3f player_p = v3f_make(0, 1, 0);
+  
+  while (true)
   {
-    RECT client_rect;
-    client_rect.left = 0;
-    client_rect.top = 0;
-    client_rect.right = 1280;
-    client_rect.bottom = 720;
+    w32_fill_input(&window);
+    
+    if (OS_KeyReleased(input, OS_Input_KeyType_Escape))
     {
-      b32 adjusted = AdjustWindowRectEx(&client_rect, WS_OVERLAPPEDWINDOW, FALSE, WS_EX_NOREDIRECTIONBITMAP);
-      Assert(adjusted != 0);
+      ExitProcess(0);
     }
     
-    s32 window_width = client_rect.right - client_rect.left;
-    s32 window_height = client_rect.bottom - client_rect.top;
-    
-    W32_Window window = 
+    f32 move_units = 1.0f;
+    if (OS_KeyReleased(input, OS_Input_KeyType_W))
     {
-      .handle = CreateWindowExA(WS_EX_NOREDIRECTIONBITMAP, wnd_class.lpszClassName, "Iso Jimmy",
-                                WS_OVERLAPPEDWINDOW, 0, 0, window_width, window_height, 0, 0, hInstance, 0),
-      .client_width = 1280,
-      .client_height = 720,
-    };
+      player_p.z += move_units;
+    }
     
-    if (IsWindow(window.handle))
+    if (OS_KeyReleased(input, OS_Input_KeyType_S))
     {
-      ShowWindow(window.handle, SW_SHOW);
-      R_State renderer_state;
-      r_init(&renderer_state, window);
-      
-      while (true)
+      player_p.z -= move_units;
+    }
+    
+    if (OS_KeyReleased(input, OS_Input_KeyType_A))
+    {
+      player_p.x -= move_units;
+    }
+    
+    if (OS_KeyReleased(input, OS_Input_KeyType_D))
+    {
+      player_p.x += move_units;
+    }
+    
+#if 0
+    if (OS_KeyReleased(input, OS_Input_KeyType_Space))
+    {
+      player_p.y += move_units;
+    }
+    
+    if (OS_KeyReleased(input, OS_Input_KeyType_LShift))
+    {
+      player_p.y -= move_units;
+    }
+#endif
+    
+    for (u32 block_z = 0; block_z < 30; ++block_z)
+    {
+      for (u32 block_x = 0; block_x < 30; ++block_x)
       {
-        MSG message;
-        while (PeekMessage(&message, 0, 0, 0, PM_REMOVE))
-        {
-          TranslateMessage(&message);
-          DispatchMessage(&message);
-        }
-        
-        f32 clear_colour[] = { 0.2f, 0.3f, 0.3f, 1.0f };
-        ID3D11DeviceContext_ClearRenderTargetView(renderer_state.device_context, renderer_state.back_buffer_rtv, clear_colour);
-        IDXGISwapChain_Present(renderer_state.swap_chain, 1, 0);
+        r_model_add_instance(&renderer_state.model_instances,
+                             v3f_make((f32)block_x, 0.0f, (f32)block_z),
+                             v3f_make(1.0f, 1.0f, 1.0f),
+                             v4f_make(1.0f, 0.3f, 0.4f, 1.0f));
       }
     }
-  }
-  else
-  {
-    Assert(!"TODO: Logging");
+    
+    r_model_add_instance(&renderer_state.model_instances,
+                         player_p,
+                         v3f_make(1.0f, 1.0f, 1.0f),
+                         v4f_make(1.0f, 1.0f, 1.0f, 1.0f));
+    
+    D3D11_VIEWPORT viewport;
+    viewport.Width = (f32)renderer_state.back_buffer_width;
+    viewport.Height = (f32)renderer_state.back_buffer_height;
+    viewport.MinDepth = 0;
+    viewport.MaxDepth = 1;
+    viewport.TopLeftX = 0;
+    viewport.TopLeftY = 0;
+    
+    f32 clear_colour[] = { 0.0f, 0.0f, 0.0f, 1.0f };
+    ID3D11DeviceContext_ClearRenderTargetView(renderer_state.device_context, renderer_state.back_buffer_rtv, clear_colour);
+    ID3D11DeviceContext_ClearDepthStencilView(renderer_state.device_context, renderer_state.main_dsv, D3D11_CLEAR_DEPTH, 1.0f, 0);
+    
+    D3D11_MAPPED_SUBRESOURCE mapped_subrec;
+    ID3D11DeviceContext_Map(renderer_state.device_context, (ID3D11Resource *)renderer_state.game_sbuffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped_subrec);
+    CopyMemory(mapped_subrec.pData, renderer_state.model_instances.ins, mapped_subrec.RowPitch);
+    ID3D11DeviceContext_Unmap(renderer_state.device_context, (ID3D11Resource *)renderer_state.game_sbuffer, 0);
+    
+    v3f camera_look_to = player_p;
+    v3f camera_look_from = v3f_make(player_p.x + 10, 10, player_p.z - 10);
+    v3f camera_look = v3f_sub(camera_look_to, camera_look_from);
+    v3f camera_up = v3f_make(0, 1, 0);
+    
+    v3f camera_x, camera_y, camera_z;
+    {
+      v3f a;
+      a = v3f_scale(v3f_dot(camera_up, camera_look) / v3f_dot(camera_look, camera_look), camera_look);
+      camera_z = v3f_normalize_or_zero(camera_look);
+      camera_y = v3f_sub_and_normalize_or_zero(camera_up, a);
+      camera_x = v3f_normalize_or_zero(v3f_cross(camera_y, camera_z));
+    }
+    
+    DX11_VertexShader_Constants init_cbuffer =
+    {
+      .proj = m44_perspective_dx11((f32)renderer_state.back_buffer_height/(f32)renderer_state.back_buffer_width,
+                                   DegToRad(66.2f), 1.0f, 100.0f),
+      .world_to_camera = (m44)
+      {
+        camera_x.x, camera_x.y, camera_x.z, -v3f_dot(camera_look_from, camera_x),
+        camera_y.x, camera_y.y, camera_y.z, -v3f_dot(camera_look_from, camera_y),
+        camera_z.x, camera_z.y, camera_z.z, -v3f_dot(camera_look_from, camera_z),
+        0.0f, 0.0f, 0.0f, 1.0f,
+      },
+    };
+    
+    ID3D11DeviceContext_Map(renderer_state.device_context, (ID3D11Resource *)renderer_state.game_cbuffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped_subrec);
+    CopyMemory(mapped_subrec.pData, &init_cbuffer, mapped_subrec.RowPitch);
+    ID3D11DeviceContext_Unmap(renderer_state.device_context, (ID3D11Resource *)renderer_state.game_cbuffer, 0);
+    
+    ID3D11DeviceContext_IASetPrimitiveTopology(renderer_state.device_context, D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    UINT offset = 0;
+    ID3D11DeviceContext_IASetVertexBuffers(renderer_state.device_context, 0, 1, &renderer_state.cube_model.vertices, &renderer_state.cube_model.struct_size, &offset);
+    ID3D11DeviceContext_IASetIndexBuffer(renderer_state.device_context, renderer_state.cube_model.indices, DXGI_FORMAT_R32_UINT, 0);
+    ID3D11DeviceContext_IASetInputLayout(renderer_state.device_context, renderer_state.game_input_layput);
+    
+    ID3D11DeviceContext_VSSetShader(renderer_state.device_context, renderer_state.game_shader.vertex, null, 0);
+    ID3D11DeviceContext_VSSetConstantBuffers(renderer_state.device_context, 0, 1, &renderer_state.game_cbuffer);
+    ID3D11DeviceContext_VSSetShaderResources(renderer_state.device_context, 0, 1, &renderer_state.game_sbuffer_srv);
+    
+    ID3D11DeviceContext_RSSetState(renderer_state.device_context, renderer_state.raster_wire_cull_ccw);
+    ID3D11DeviceContext_RSSetViewports(renderer_state.device_context, 1, &viewport);
+    
+    ID3D11DeviceContext_PSSetShader(renderer_state.device_context, renderer_state.game_shader.pixel, null, 0);
+    
+    ID3D11DeviceContext_OMSetDepthStencilState(renderer_state.device_context, renderer_state.ds_depth_only, 0);
+    ID3D11DeviceContext_OMSetRenderTargets(renderer_state.device_context, 1, &renderer_state.back_buffer_rtv, renderer_state.main_dsv);
+    ID3D11DeviceContext_OMSetBlendState(renderer_state.device_context, (ID3D11BlendState *)renderer_state.blend_state_transparency, null, 0xffffffff);
+    
+    // NOTE(cj): Cube instance
+    if (renderer_state.model_instances.count)
+    {
+      ID3D11DeviceContext_DrawIndexedInstanced(renderer_state.device_context,
+                                               renderer_state.cube_model.indices_count,
+                                               (UINT)renderer_state.model_instances.count,
+                                               0, 0, 0);
+    }
+    
+    IDXGISwapChain_Present(renderer_state.swap_chain, 1, 0);
+    ID3D11DeviceContext_ClearState(renderer_state.device_context);
+    
+    renderer_state.model_instances.count = 0;
   }
   
   ExitProcess(0);

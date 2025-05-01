@@ -23,7 +23,7 @@ m_arena_push(M_Arena *arena, u64 size)
   if (desired_stack_ptr <= arena->capacity)
   {
     u64 desired_commit_ptr = arena->commit_ptr;
-    void *result_block_on_success = 0;
+    void *result_block_on_success = arena->base + arena->stack_ptr;
     if (desired_stack_ptr >= arena->commit_ptr)
     {
       u64 new_commit_ptr = Align(desired_stack_ptr, M_Arena_DefaultCommit());
