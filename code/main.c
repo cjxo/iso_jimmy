@@ -647,6 +647,11 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PSTR lpCmd, int nShowCmd)
   r_init(&renderer_state, window, arena);
   
   v3f player_p = v3f_make(0, 1, 0);
+  b32 can_move_now = true;
+  f32 t_move = 0.0f;
+  v3f requested_move = player_p;
+  
+  v3f camera_look_to = player_p;
   
   while (true)
   {
@@ -657,38 +662,51 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PSTR lpCmd, int nShowCmd)
       ExitProcess(0);
     }
     
-    f32 move_units = 1.0f;
-    if (OS_KeyReleased(input, OS_Input_KeyType_W))
+    if (can_move_now)
     {
-      player_p.z += move_units;
+      f32 move_units = 1.0f;
+      if (OS_KeyHeld(input, OS_Input_KeyType_W))
+      {
+        requested_move.z += move_units;
+        can_move_now = false;
+      }
+      
+      if (OS_KeyHeld(input, OS_Input_KeyType_S))
+      {
+        requested_move.z -= move_units;
+        can_move_now = false;
+      }
+      
+      if (OS_KeyHeld(input, OS_Input_KeyType_A))
+      {
+        requested_move.x -= move_units;
+        can_move_now = false;
+      }
+      
+      if (OS_KeyHeld(input, OS_Input_KeyType_D))
+      {
+        requested_move.x += move_units;
+        can_move_now = false;
+      }
     }
-    
-    if (OS_KeyReleased(input, OS_Input_KeyType_S))
+    else
     {
-      player_p.z -= move_units;
+      if (t_move >= 0.99f)
+      {
+        player_p = requested_move;
+        t_move = 0.0f;
+        can_move_now = true;
+      }
+      else
+      {
+        player_p.x = player_p.x * (1.0f - t_move) + t_move * requested_move.x;
+        f32 hop_height = 1.0f / 10.0f;
+        player_p.y = player_p.y * (1.0f - t_move) + t_move * requested_move.y - hop_height*t_move*t_move + hop_height;
+        player_p.z = player_p.z * (1.0f - t_move) + t_move * requested_move.z;
+        
+        t_move += seconds_per_frame*3;
+      }
     }
-    
-    if (OS_KeyReleased(input, OS_Input_KeyType_A))
-    {
-      player_p.x -= move_units;
-    }
-    
-    if (OS_KeyReleased(input, OS_Input_KeyType_D))
-    {
-      player_p.x += move_units;
-    }
-    
-#if 0
-    if (OS_KeyReleased(input, OS_Input_KeyType_Space))
-    {
-      player_p.y += move_units;
-    }
-    
-    if (OS_KeyReleased(input, OS_Input_KeyType_LShift))
-    {
-      player_p.y -= move_units;
-    }
-#endif
     
     for (u32 block_z = 0; block_z < 30; ++block_z)
     {
@@ -723,8 +741,11 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PSTR lpCmd, int nShowCmd)
     CopyMemory(mapped_subrec.pData, renderer_state.model_instances.ins, mapped_subrec.RowPitch);
     ID3D11DeviceContext_Unmap(renderer_state.device_context, (ID3D11Resource *)renderer_state.game_sbuffer, 0);
     
-    v3f camera_look_to = player_p;
-    v3f camera_look_from = v3f_make(player_p.x + 10, 10, player_p.z - 10);
+    f32 camera_lock_strength = 0.03f;
+    camera_look_to.x = camera_look_to.x * (1.0f - camera_lock_strength) + camera_lock_strength * player_p.x;
+    camera_look_to.y = 0;
+    camera_look_to.z = camera_look_to.z * (1.0f - camera_lock_strength) + camera_lock_strength * player_p.z;
+    v3f camera_look_from = v3f_make(camera_look_to.x + 10, 10, camera_look_to.z - 10);
     v3f camera_look = v3f_sub(camera_look_to, camera_look_from);
     v3f camera_up = v3f_make(0, 1, 0);
     
