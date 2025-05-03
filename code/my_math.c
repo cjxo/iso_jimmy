@@ -109,6 +109,15 @@ v3f_scale(f32 x, v3f a)
   return(result);
 }
 
+inline function v3f
+v3f_additive_inverse(v3f a)
+{
+  v3f result;
+  result.x = -a.x;
+  result.y = -a.y;
+  result.z = -a.z;
+  return(result);
+}
 
 inline function v4f
 v4f_make(f32 x, f32 y, f32 z, f32 w)
@@ -149,5 +158,14 @@ m44_identity(void)
 {
   m44 result = {0};
   result.m[0][0] = result.m[1][1] = result.m[2][2] = result.m[3][3] = 1.0f;
+  return(result);
+}
+
+inline function Plane
+plane_create(v3f p, v3f n)
+{
+  Plane result;
+  result.n = n;
+  result.d = v3f_dot(n, p);
   return(result);
 }

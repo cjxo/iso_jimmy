@@ -65,6 +65,17 @@ m_arena_pop(M_Arena *arena, u64 size)
   {
     BOOL meow = VirtualFree(arena->base + new_commit_ptr, arena->commit_ptr - new_commit_ptr, MEM_DECOMMIT);
     Assert(meow != 0);
+    arena->commit_ptr = new_commit_ptr;
+  }
+}
+
+inline function void
+m_arena_clear(M_Arena *arena)
+{
+  u64 arena_size = sizeof(M_Arena);
+  if (arena->stack_ptr > arena_size)
+  {
+    m_arena_pop(arena, arena->stack_ptr - arena_size);
   }
 }
 

@@ -35,6 +35,11 @@ typedef float f32;
 #define GB(v) (MB(v)*1024llu)
 #define Align(a,b) ((a)+((b)-1))&(~((b)-1))
 
+#define SLLPushBack_N(f,l,n,next) ((((f)==0)?((f)=(l)=(n)):((l)->next=(n),(l)=(n))),((n)->next=0))
+#define SLLPushBack(f,l,n) SLLPushBack_N(f,l,n,next)
+
+#define InvalidDefaultCase default:{Assert(0);}break
+
 #define M_Arena_DefaultCommit() KB(8)
 typedef struct
 {
@@ -52,10 +57,11 @@ typedef struct
 
 #define M_Arena_PushArray(a,T,c) (T*)m_arena_push((a),sizeof(T)*(c))
 #define M_Arena_PushStruct(a,T) M_Arena_PushArray(a,T,1)
-function M_Arena *m_arena_reserve(u64 cap);
-function void *   m_arena_push(M_Arena *arena, u64 size);
-function void     m_arena_pop(M_Arena *arena, u64 size);
-function M_Arena *m_get_for_transient_purposes(M_Arena **conflict, u64 count);
+function M_Arena *   m_arena_reserve(u64 cap);
+function void *      m_arena_push(M_Arena *arena, u64 size);
+function void        m_arena_pop(M_Arena *arena, u64 size);
+inline function void m_arena_clear(M_Arena *arena);
+function M_Arena *   m_get_for_transient_purposes(M_Arena **conflict, u64 count);
 
 #define str8(s) (String_Const_U8){(s),sizeof(s)-1,sizeof(s)-1}
 typedef struct
