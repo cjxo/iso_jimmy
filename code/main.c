@@ -386,6 +386,17 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PSTR lpCmd, int nShowCmd)
       OutputDebugStringA(format);
     }
     
+    R_Pass *ui_pass = r_acquire_ui_pass(&renderer_state);
+    r_ui_textf(ui_pass, v2f_make(0, 0), v4f_make(1,1,1,1), str8("DEBUG"));
+    r_ui_textf(ui_pass, v2f_make(0, 28), v4f_make(1,1,1,1),
+               str8("Player World Coord: <%.2f, %.2f, %.2f>"),
+               game_state.player_p.x,
+               game_state.player_p.y,
+               game_state.player_p.z);
+    
+    r_ui_textf(ui_pass, v2f_make(0, 28*2), v4f_make(1,1,1,1),
+               str8("Active Blocks: %llu"), 
+               light_pass->withlight.instances_count);
     r_submit(&renderer_state);
   }
   

@@ -15,6 +15,8 @@ typedef union
   f32 v[2];
 } v2f;
 
+inline v2f v2f_make(f32 x, f32 y);
+
 typedef union
 {
   struct

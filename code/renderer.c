@@ -1,3 +1,55 @@
+global_variable WCHAR *global_vshader_files[] =
+{
+  [R_VShaderType_Game] = L"..\\code\\shaders\\game.hlsl",
+  [R_VShaderType_UI] = L"..\\code\\shaders\\ui.hlsl",
+};
+
+global_variable char *global_vshader_entries[] =
+{
+  [R_VShaderType_Game] = "vs_main",
+  [R_VShaderType_UI] = "vs_main",
+};
+
+global_variable WCHAR *global_pshader_files[] =
+{
+  [R_PShaderType_GameWithLight] = L"..\\code\\shaders\\game.hlsl",
+  [R_PShaderType_GameWithoutLight] = L"..\\code\\shaders\\game.hlsl",
+  [R_PShaderType_UI] = L"..\\code\\shaders\\ui.hlsl",
+};
+
+global_variable char *global_pshader_entries[] =
+{
+  [R_PShaderType_GameWithLight] = "ps_main",
+  [R_PShaderType_GameWithoutLight] = "ps_nolight",
+  [R_PShaderType_UI] = "ps_main",
+};
+
+struct { UINT size; UINT count; } global_variable global_sbuffer_configs[] =
+{
+  [R_SBufferType_Game] = { sizeof(R_Model_Instance), R_MaxModelInstances },
+  [R_SBufferType_UI] = { sizeof(R_UI_Rect), R_MaxUIRects }
+};
+
+global_variable UINT global_cbuffer_sizes[] =
+{
+  [R_CBufferType_Game_VShader0] = sizeof(DX11_VertexShader_Constants),
+  [R_CBufferType_Game_PShader0] = sizeof(DX11_PixelShader_Constants),
+  [R_CBufferType_UI_VShader0] = sizeof(DX11_UI_VShader_Constants),
+};
+
+global_variable D3D11_INPUT_ELEMENT_DESC global_il_game[] =
+{
+  { "IA_Vertex", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, D3D11_APPEND_ALIGNED_ELEMENT , D3D11_INPUT_PER_VERTEX_DATA, 0 },
+  { "IA_Tangent", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, D3D11_APPEND_ALIGNED_ELEMENT , D3D11_INPUT_PER_VERTEX_DATA, 0 },
+  { "IA_Bitangent", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, D3D11_APPEND_ALIGNED_ELEMENT , D3D11_INPUT_PER_VERTEX_DATA, 0 },
+  { "IA_Normal", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, D3D11_APPEND_ALIGNED_ELEMENT , D3D11_INPUT_PER_VERTEX_DATA, 0 },
+  { "IA_UV", 0, DXGI_FORMAT_R32G32_FLOAT, 0, D3D11_APPEND_ALIGNED_ELEMENT , D3D11_INPUT_PER_VERTEX_DATA, 0 },
+};
+
+struct { D3D11_INPUT_ELEMENT_DESC *desc; UINT count; } global_variable global_il_descs[] =
+{
+  [R_InputLayoutType_Game] = { global_il_game, ArrayCount(global_il_game) }
+};
 
 function void
 dx11_create_device(R_State *renderer_state)
@@ -163,6 +215,16 @@ dx11_create_rasterizer_states(R_State *state)
     hr = ID3D11Device_CreateRasterizerState(state->device, &desc, &state->raster_wire_cull_ccw);
     if (SUCCEEDED(hr))
     {
+      desc.FillMode = D3D11_FILL_SOLID;
+      desc.CullMode = D3D11_CULL_NONE;
+      hr = ID3D11Device_CreateRasterizerState(state->device, &desc, &state->raster_fill_nocull_ccw);
+      if (SUCCEEDED(hr))
+      {
+      }
+      else
+      {
+        Assert(!"TODO: Logging");
+      }
     }
     else
     {
@@ -371,30 +433,138 @@ dx11_create_model(ID3D11Device *device,
 }
 
 function void
-dx11_create_game_state(R_State *state)
+dx11_create_general_rendering_states(R_State *state)
 {
   ID3D10Blob *bytecode, *error;
   HRESULT hr;
   D3D11_BUFFER_DESC buffer_desc;
   D3D11_SHADER_RESOURCE_VIEW_DESC srv_desc;
   
-  D3D11_INPUT_ELEMENT_DESC il_desc[] =
+  for (R_VShaderType shader_type = R_VShaderType_Game;
+       shader_type < R_VShaderType_Count;
+       ++shader_type)
   {
-    { "IA_Vertex", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, D3D11_APPEND_ALIGNED_ELEMENT , D3D11_INPUT_PER_VERTEX_DATA, 0 },
-    { "IA_Tangent", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, D3D11_APPEND_ALIGNED_ELEMENT , D3D11_INPUT_PER_VERTEX_DATA, 0 },
-    { "IA_Bitangent", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, D3D11_APPEND_ALIGNED_ELEMENT , D3D11_INPUT_PER_VERTEX_DATA, 0 },
-    { "IA_Normal", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, D3D11_APPEND_ALIGNED_ELEMENT , D3D11_INPUT_PER_VERTEX_DATA, 0 },
-    { "IA_UV", 0, DXGI_FORMAT_R32G32_FLOAT, 0, D3D11_APPEND_ALIGNED_ELEMENT , D3D11_INPUT_PER_VERTEX_DATA, 0 },
-  };
+    hr = D3DCompileFromFile(global_vshader_files[shader_type], null, D3D_COMPILE_STANDARD_FILE_INCLUDE,
+                            global_vshader_entries[shader_type], "vs_5_0", DX11_ShaderFlags,
+                            0, &bytecode, &error);
+    if (SUCCEEDED(hr))
+    {
+      hr = ID3D11Device_CreateVertexShader(state->device, ID3D10Blob_GetBufferPointer(bytecode), 
+                                           ID3D10Blob_GetBufferSize(bytecode), 0,
+                                           state->vshaders + shader_type);
+      
+      
+      if (SUCCEEDED(hr))
+      {
+        if (shader_type == R_VShaderType_Game)
+        {
+          hr = ID3D11Device_CreateInputLayout(state->device,
+                                              global_il_descs[R_InputLayoutType_Game].desc,
+                                              global_il_descs[R_InputLayoutType_Game].count,
+                                              ID3D10Blob_GetBufferPointer(bytecode), 
+                                              ID3D10Blob_GetBufferSize(bytecode),
+                                              state->input_layouts + R_InputLayoutType_Game);
+          if (!SUCCEEDED(hr))
+          {
+            Assert(!"TODO: LOGGING");
+          }
+        }
+      }
+      else
+      {
+        Assert(!"TODO: LOGGING");
+      }
+      
+      ID3D10Blob_Release(bytecode);
+    }
+    else
+    {
+      OutputDebugStringA(ID3D10Blob_GetBufferPointer(error));
+      Assert(!"TODO: LOGGING");
+    }
+  }
   
-  dx11_create_shaders_with_input_layout(state->device, L"..\\code\\shaders\\game.hlsl",
-                                        "vs_main", "ps_main",
-                                        il_desc,
-                                        ArrayCount(il_desc),
-                                        &state->game_vshader_main,
-                                        &state->game_pshader_main,
-                                        &state->game_input_layput);
+  for (R_PShaderType shader_type = R_PShaderType_GameWithLight;
+       shader_type < R_PShaderType_Count;
+       ++shader_type)
+  {
+    hr = D3DCompileFromFile(global_pshader_files[shader_type], null, D3D_COMPILE_STANDARD_FILE_INCLUDE,
+                            global_pshader_entries[shader_type], "ps_5_0", DX11_ShaderFlags,
+                            0, &bytecode, &error);
+    if (SUCCEEDED(hr))
+    {
+      hr = ID3D11Device_CreatePixelShader(state->device, ID3D10Blob_GetBufferPointer(bytecode), 
+                                          ID3D10Blob_GetBufferSize(bytecode), 0,
+                                          state->pshaders + shader_type);
+      if (!SUCCEEDED(hr))
+      {
+        Assert(!"TODO: LOGGING");
+      }
+      
+      ID3D10Blob_Release(bytecode);
+    }
+    else
+    {
+      OutputDebugStringA(ID3D10Blob_GetBufferPointer(error));
+      Assert(!"TODO: LOGGING");
+    }
+  }
   
+  for (R_SBufferType sbuffer_type = R_SBufferType_Game;
+       sbuffer_type < R_SBufferType_Count;
+       ++sbuffer_type)
+  {
+    UINT size = global_sbuffer_configs[sbuffer_type].size;
+    UINT count = global_sbuffer_configs[sbuffer_type].count;
+    
+    buffer_desc.ByteWidth = size*count;
+    buffer_desc.Usage = D3D11_USAGE_DYNAMIC;
+    buffer_desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+    buffer_desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+    buffer_desc.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
+    buffer_desc.StructureByteStride = size;
+    
+    hr = ID3D11Device_CreateBuffer(state->device, &buffer_desc, 0, state->sbuffers + sbuffer_type);
+    if (SUCCEEDED(hr))
+    {
+      srv_desc.Format = DXGI_FORMAT_UNKNOWN;
+      srv_desc.ViewDimension = D3D11_SRV_DIMENSION_BUFFER;
+      srv_desc.Buffer.ElementOffset = 0;
+      srv_desc.Buffer.NumElements = count;
+      hr = ID3D11Device_CreateShaderResourceView(state->device, (ID3D11Resource *)(state->sbuffers[sbuffer_type]), &srv_desc, state->sbuffer_srvs + sbuffer_type);
+      if (!SUCCEEDED(hr))
+      {
+        Assert(!"TODO: LOGGING");
+      }
+    }
+    else
+    {
+      Assert(!"TODO: LOGGING");
+    }
+  }
+  
+  for (R_CBufferType cbuffer_type = R_CBufferType_Game_VShader0;
+       cbuffer_type < R_CBufferType_Count;
+       ++cbuffer_type)
+  {
+    buffer_desc.ByteWidth = (global_cbuffer_sizes[cbuffer_type]+15)&(~15);
+    buffer_desc.Usage = D3D11_USAGE_DYNAMIC;
+    buffer_desc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+    buffer_desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+    buffer_desc.MiscFlags = 0;
+    buffer_desc.StructureByteStride = 0;
+    
+    hr = ID3D11Device_CreateBuffer(state->device, &buffer_desc, 0, state->cbuffers + cbuffer_type);
+    if (!SUCCEEDED(hr))
+    {
+      Assert(!"TODO: LOGGING");
+    }
+  }
+}
+
+function void
+dx11_create_game_state(R_State *state)
+{
   // p <-> tangent <-> bitangent <-> normal <-> uv
   f32 cube_vbuffer[] =
   {
@@ -458,75 +628,147 @@ dx11_create_game_state(R_State *state)
   state->cube_model = dx11_create_model(state->device,
                                         cube_vbuffer, sizeof(cube_vbuffer), sizeof(R_Game_Vertex),
                                         cube_ibuffer, ArrayCount(cube_ibuffer));
+}
+
+function void
+dx11_create_font_atlas(R_State *state)
+{
+  s32 point_size = 18;
+  state->font_handle = CreateFontA(-(point_size * 96)/72, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, ANSI_CHARSET, 
+                                   OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, ANTIALIASED_QUALITY,
+                                   DEFAULT_PITCH | FF_DONTCARE, "Arial");
   
-  buffer_desc.ByteWidth = (sizeof(DX11_VertexShader_Constants)+15)&(~15);
-  buffer_desc.Usage = D3D11_USAGE_DYNAMIC;
-  buffer_desc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
-  buffer_desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
-  buffer_desc.MiscFlags = 0;
-  buffer_desc.StructureByteStride = 0;
-  
-  hr = ID3D11Device_CreateBuffer(state->device, &buffer_desc, 0, &state->game_vshad_cbuffer);
-  if (SUCCEEDED(hr))
+  if (state->font_handle)
   {
-    buffer_desc.ByteWidth = (sizeof(DX11_PixelShader_Constants)+15)&(~15);
-    buffer_desc.Usage = D3D11_USAGE_DYNAMIC;
-    buffer_desc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
-    buffer_desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
-    buffer_desc.MiscFlags = 0;
-    buffer_desc.StructureByteStride = 0;
+#define MaxBitmapSize 512
+    s32 bitmap_width = MaxBitmapSize;
+    s32 bitmap_height = MaxBitmapSize;
     
-    hr = ID3D11Device_CreateBuffer(state->device, &buffer_desc, 0, &state->game_pshad_cbuffer);
-    if (SUCCEEDED(hr))
+    HDC dc = CreateCompatibleDC(0);
+    HBITMAP bitmap = CreateCompatibleBitmap(dc, bitmap_width, bitmap_height);
+    
+    RECT r;
+    r.top = 0;
+    r.left = 0;
+    r.right = bitmap_width;
+    r.bottom = bitmap_height;
+    SelectObject(dc, bitmap);
+    FillRect(dc, &r, GetStockObject(BLACK_BRUSH));
+    SelectObject(dc, state->font_handle);
+    SetBkMode(dc, TRANSPARENT);
+    SetTextColor(dc, RGB(255,255,255));
+    
+    TEXTMETRIC text_metrics;
+    GetTextMetrics(dc, &text_metrics);
+    
+    state->font.ascent = (f32)text_metrics.tmAscent;
+    state->font.descent = (f32)text_metrics.tmDescent;
+    
+    s32 gap = 4;
+    s32 pen_x = gap;
+    s32 pen_y = gap;
+    SetTextAlign(dc, TA_TOP|TA_LEFT);
+    for (u8 codepoint = 32; codepoint < 128; ++codepoint)
     {
-      buffer_desc.ByteWidth = (UINT)(sizeof(R_Model_Instance)*R_MaxModelInstances);
-      buffer_desc.Usage = D3D11_USAGE_DYNAMIC;
-      buffer_desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
-      buffer_desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
-      buffer_desc.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
-      buffer_desc.StructureByteStride = sizeof(R_Model_Instance);
+      SIZE glyph_dims;
+      char c = (char)codepoint;
+      GetTextExtentPoint32A(dc, &c, 1, &glyph_dims);
+      glyph_dims.cx = glyph_dims.cx;
       
-      hr = ID3D11Device_CreateBuffer(state->device, &buffer_desc, 0, &state->game_sbuffer);
-      if (SUCCEEDED(hr))
+      if ((pen_x + glyph_dims.cx + gap) >= bitmap_width)
       {
-        srv_desc.Format = DXGI_FORMAT_UNKNOWN;
-        srv_desc.ViewDimension = D3D11_SRV_DIMENSION_BUFFER;
-        srv_desc.Buffer.ElementOffset = 0;
-        srv_desc.Buffer.NumElements = R_MaxModelInstances;
-        hr = ID3D11Device_CreateShaderResourceView(state->device, (ID3D11Resource *)state->game_sbuffer, &srv_desc, &state->game_sbuffer_srv);
-        if (SUCCEEDED(hr))
-        {
-          hr = D3DCompileFromFile(L"..\\code\\shaders\\game.hlsl", null, D3D_COMPILE_STANDARD_FILE_INCLUDE,
-                                  "ps_nolight", "ps_5_0", DX11_ShaderFlags, 0, &bytecode, &error);
-          
-          
-          if (SUCCEEDED(hr))
-          {
-            hr = ID3D11Device_CreatePixelShader(state->device, ID3D10Blob_GetBufferPointer(bytecode), 
-                                                ID3D10Blob_GetBufferSize(bytecode), 0, &state->game_pshader_nolight);
-            
-            ID3D10Blob_Release(bytecode);
-          }
-          else
-          {
-            OutputDebugStringA(ID3D10Blob_GetBufferPointer(error));
-            Assert(!"TODO: Logging");
-          }
-        }
-        else
-        {
-          Assert(!"TODO: Logging");
-        }
+        pen_x = gap;
+        pen_y += text_metrics.tmHeight + gap;
       }
-      else
-      {
-        Assert(!"TODO: Logging");
-      }
+      
+      // https://learn.microsoft.com/en-us/windows/win32/gdi/character-widths
+      ABCFLOAT abc;
+      GetCharABCWidthsFloatA(dc, codepoint, codepoint, &abc);
+      f32 advance_x = (abc.abcfA + abc.abcfB + abc.abcfC);
+      
+      TextOut(dc, pen_x, pen_y, &c, 1);
+      
+      state->font.glyphs[codepoint].advance = advance_x;
+      state->font.glyphs[codepoint].clip_x = (f32)pen_x;
+      state->font.glyphs[codepoint].clip_y = (f32)pen_y;
+      state->font.glyphs[codepoint].clip_width = (f32)(glyph_dims.cx);
+      state->font.glyphs[codepoint].clip_height = (f32)(glyph_dims.cy);
+      pen_x += glyph_dims.cx + gap;
     }
+    
+    BITMAPINFO bitmap_info = {0};
+    bitmap_info.bmiHeader.biSize = sizeof(bitmap_info.bmiHeader);
+    bitmap_info.bmiHeader.biWidth = bitmap_width;
+    bitmap_info.bmiHeader.biHeight = -bitmap_height;
+    bitmap_info.bmiHeader.biPlanes = 1;
+    bitmap_info.bmiHeader.biBitCount = 32;
+    bitmap_info.bmiHeader.biCompression = BI_RGB;
+    
+    M_Temp temp_mem = m_temp_begin(m_get_for_transient_purposes(0,0));
+    u64 bitmap_area = bitmap_width*bitmap_height*4;
+    u8 *source_buffer = m_arena_push(temp_mem.arena, bitmap_area);
+    u8 *dest_buffer = m_arena_push(temp_mem.arena, bitmap_area);
+    GetDIBits(dc, bitmap, 0, bitmap_height, source_buffer, &bitmap_info, DIB_RGB_COLORS);
+    
+    u8 *src = source_buffer;
+    u8 *dest = dest_buffer;
+    for (s32 y_pix = 0; y_pix < bitmap_height; ++y_pix)
+    {
+      u8 *dest_row = dest;
+      u8 *src_row = src;
+      for (s32 x_pix = 0; x_pix < bitmap_width; ++x_pix)
+      {
+        *dest_row++ = src_row[0];
+        *dest_row++ = src_row[1];
+        *dest_row++ = src_row[2];
+        *dest_row++ = src_row[0];
+        src_row += 4;
+      }
+      
+      dest += bitmap_width * 4;
+      src += bitmap_width * 4;
+    }
+    
+    D3D11_TEXTURE2D_DESC atlas_desc =
+    {
+      .Width = bitmap_width,
+      .Height = bitmap_height,
+      .MipLevels = 1,
+      .ArraySize = 1,
+      .Format = DXGI_FORMAT_R8G8B8A8_UNORM,
+      .SampleDesc = { 1, 0 },
+      .Usage = D3D11_USAGE_IMMUTABLE,
+      .BindFlags = D3D11_BIND_SHADER_RESOURCE,
+      .CPUAccessFlags = 0,
+      .MiscFlags = 0,
+    };
+    
+    D3D11_SUBRESOURCE_DATA atlas_subrec =
+    {
+      .pSysMem = dest_buffer,
+      .SysMemPitch = bitmap_width*4,
+    };
+    
+    ID3D11Texture2D *atlas_font_tex;
+    if (SUCCEEDED(ID3D11Device_CreateTexture2D(state->device, &atlas_desc, &atlas_subrec, &atlas_font_tex)))
+    {
+      ID3D11Device_CreateShaderResourceView(state->device, (ID3D11Resource *)atlas_font_tex, 0, &state->font.srv);
+      state->font.sheet_width = bitmap_width;
+      state->font.sheet_height = bitmap_height;
+      ID3D11Texture2D_Release(atlas_font_tex);
+    }
+    else
+    {
+      Assert(!"Log Soon");
+    }
+    
+    m_temp_end(temp_mem);
+    DeleteObject(bitmap);
+    DeleteDC(dc);
   }
   else
   {
-    Assert(!"TODO: Logging");
+    Assert(!"Log Soon");
   }
 }
 
@@ -539,7 +781,10 @@ r_init(R_State *renderer_state, OS_Window window)
   dx11_create_rasterizer_states(renderer_state);
   dx11_create_depth_stencil_states(renderer_state);
   dx11_create_blend_states(renderer_state);
+  
+  dx11_create_general_rendering_states(renderer_state);
   dx11_create_game_state(renderer_state);
+  dx11_create_font_atlas(renderer_state);
 }
 
 function void
@@ -568,9 +813,9 @@ r_submit(R_State *state)
         R_Pass_GameWithLight *gwl = &pass->withlight;
         
         D3D11_MAPPED_SUBRESOURCE mapped_subrec;
-        ID3D11DeviceContext_Map(state->device_context, (ID3D11Resource *)state->game_sbuffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped_subrec);
+        ID3D11DeviceContext_Map(state->device_context, (ID3D11Resource *)state->sbuffers[R_SBufferType_Game], 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped_subrec);
         CopyMemory(mapped_subrec.pData, gwl->instances, mapped_subrec.RowPitch);
-        ID3D11DeviceContext_Unmap(state->device_context, (ID3D11Resource *)state->game_sbuffer, 0);
+        ID3D11DeviceContext_Unmap(state->device_context, (ID3D11Resource *)state->sbuffers[R_SBufferType_Game], 0);
         
         {
           DX11_VertexShader_Constants init_cbuffer =
@@ -578,9 +823,9 @@ r_submit(R_State *state)
             gwl->perspective, gwl->world_to_camera,
           };
           
-          ID3D11DeviceContext_Map(state->device_context, (ID3D11Resource *)state->game_vshad_cbuffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped_subrec);
+          ID3D11DeviceContext_Map(state->device_context, (ID3D11Resource *)state->cbuffers[R_CBufferType_Game_VShader0], 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped_subrec);
           CopyMemory(mapped_subrec.pData, &init_cbuffer, mapped_subrec.RowPitch);
-          ID3D11DeviceContext_Unmap(state->device_context, (ID3D11Resource *)state->game_vshad_cbuffer, 0);
+          ID3D11DeviceContext_Unmap(state->device_context, (ID3D11Resource *)state->cbuffers[R_CBufferType_Game_VShader0], 0);
         }
         
         {
@@ -592,26 +837,26 @@ r_submit(R_State *state)
           
           CopyMemory(init_cbuffer.lights, gwl->lights, sizeof(gwl->lights));
           
-          ID3D11DeviceContext_Map(state->device_context, (ID3D11Resource *)state->game_pshad_cbuffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped_subrec);
+          ID3D11DeviceContext_Map(state->device_context, (ID3D11Resource *)state->cbuffers[R_CBufferType_Game_PShader0], 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped_subrec);
           CopyMemory(mapped_subrec.pData, &init_cbuffer, mapped_subrec.RowPitch);
-          ID3D11DeviceContext_Unmap(state->device_context, (ID3D11Resource *)state->game_pshad_cbuffer, 0);
+          ID3D11DeviceContext_Unmap(state->device_context, (ID3D11Resource *)state->cbuffers[R_CBufferType_Game_PShader0], 0);
         }
         
         ID3D11DeviceContext_IASetPrimitiveTopology(state->device_context, D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
         UINT offset = 0;
         ID3D11DeviceContext_IASetVertexBuffers(state->device_context, 0, 1, &state->cube_model.vertices, &state->cube_model.struct_size, &offset);
         ID3D11DeviceContext_IASetIndexBuffer(state->device_context, state->cube_model.indices, DXGI_FORMAT_R32_UINT, 0);
-        ID3D11DeviceContext_IASetInputLayout(state->device_context, state->game_input_layput);
+        ID3D11DeviceContext_IASetInputLayout(state->device_context, state->input_layouts[R_InputLayoutType_Game]);
         
-        ID3D11DeviceContext_VSSetShader(state->device_context, state->game_vshader_main, null, 0);
-        ID3D11DeviceContext_VSSetConstantBuffers(state->device_context, 0, 1, &state->game_vshad_cbuffer);
-        ID3D11DeviceContext_VSSetShaderResources(state->device_context, 0, 1, &state->game_sbuffer_srv);
+        ID3D11DeviceContext_VSSetShader(state->device_context, state->vshaders[R_VShaderType_Game], null, 0);
+        ID3D11DeviceContext_VSSetConstantBuffers(state->device_context, 0, 1, &state->cbuffers[R_CBufferType_Game_VShader0]);
+        ID3D11DeviceContext_VSSetShaderResources(state->device_context, 0, 1, &state->sbuffer_srvs[R_SBufferType_Game]);
         
         ID3D11DeviceContext_RSSetState(state->device_context, state->raster_fill_cull_ccw);
         ID3D11DeviceContext_RSSetViewports(state->device_context, 1, &viewport);
         
-        ID3D11DeviceContext_PSSetShader(state->device_context, state->game_pshader_main, null, 0);
-        ID3D11DeviceContext_PSSetConstantBuffers(state->device_context, 1, 1, &state->game_pshad_cbuffer);
+        ID3D11DeviceContext_PSSetShader(state->device_context, state->pshaders[R_PShaderType_GameWithLight], null, 0);
+        ID3D11DeviceContext_PSSetConstantBuffers(state->device_context, 1, 1, &state->cbuffers[R_CBufferType_Game_PShader0]);
         
         ID3D11DeviceContext_OMSetDepthStencilState(state->device_context, state->ds_depth_only, 0);
         ID3D11DeviceContext_OMSetRenderTargets(state->device_context, 1, &state->back_buffer_rtv, state->main_dsv);
@@ -625,12 +870,6 @@ r_submit(R_State *state)
                                                    (UINT)gwl->instances_count,
                                                    0, 0, 0);
         }
-        
-#if 0
-        ID3D11Buffer *null_buffer = 0;
-        ID3D11DeviceContext_PSSetShader(state->device_context, state->game_pshader_nolight, null, 0);
-        ID3D11DeviceContext_PSSetConstantBuffers(state->device_context, 1, 1, &null_buffer);
-#endif
       } break;
       
       case R_PassType_GameRenderWithoutLight:
@@ -638,9 +877,9 @@ r_submit(R_State *state)
         R_Pass_GameWithoutLight *gwl = &pass->withoutlight;
         
         D3D11_MAPPED_SUBRESOURCE mapped_subrec;
-        ID3D11DeviceContext_Map(state->device_context, (ID3D11Resource *)state->game_sbuffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped_subrec);
+        ID3D11DeviceContext_Map(state->device_context, (ID3D11Resource *)state->sbuffers[R_SBufferType_Game], 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped_subrec);
         CopyMemory(mapped_subrec.pData, gwl->instances, mapped_subrec.RowPitch);
-        ID3D11DeviceContext_Unmap(state->device_context, (ID3D11Resource *)state->game_sbuffer, 0);
+        ID3D11DeviceContext_Unmap(state->device_context, (ID3D11Resource *)state->sbuffers[R_SBufferType_Game], 0);
         
         {
           DX11_VertexShader_Constants init_cbuffer =
@@ -648,25 +887,25 @@ r_submit(R_State *state)
             gwl->perspective, gwl->world_to_camera,
           };
           
-          ID3D11DeviceContext_Map(state->device_context, (ID3D11Resource *)state->game_vshad_cbuffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped_subrec);
+          ID3D11DeviceContext_Map(state->device_context, (ID3D11Resource *)state->cbuffers[R_CBufferType_Game_VShader0], 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped_subrec);
           CopyMemory(mapped_subrec.pData, &init_cbuffer, mapped_subrec.RowPitch);
-          ID3D11DeviceContext_Unmap(state->device_context, (ID3D11Resource *)state->game_vshad_cbuffer, 0);
+          ID3D11DeviceContext_Unmap(state->device_context, (ID3D11Resource *)state->cbuffers[R_CBufferType_Game_VShader0], 0);
         }
         
         ID3D11DeviceContext_IASetPrimitiveTopology(state->device_context, D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
         UINT offset = 0;
         ID3D11DeviceContext_IASetVertexBuffers(state->device_context, 0, 1, &state->cube_model.vertices, &state->cube_model.struct_size, &offset);
         ID3D11DeviceContext_IASetIndexBuffer(state->device_context, state->cube_model.indices, DXGI_FORMAT_R32_UINT, 0);
-        ID3D11DeviceContext_IASetInputLayout(state->device_context, state->game_input_layput);
+        ID3D11DeviceContext_IASetInputLayout(state->device_context, state->input_layouts[R_InputLayoutType_Game]);
         
-        ID3D11DeviceContext_VSSetShader(state->device_context, state->game_vshader_main, null, 0);
-        ID3D11DeviceContext_VSSetConstantBuffers(state->device_context, 0, 1, &state->game_vshad_cbuffer);
-        ID3D11DeviceContext_VSSetShaderResources(state->device_context, 0, 1, &state->game_sbuffer_srv);
+        ID3D11DeviceContext_VSSetShader(state->device_context, state->vshaders[R_VShaderType_Game], null, 0);
+        ID3D11DeviceContext_VSSetConstantBuffers(state->device_context, 0, 1, &state->cbuffers[R_CBufferType_Game_VShader0]);
+        ID3D11DeviceContext_VSSetShaderResources(state->device_context, 0, 1, &state->sbuffer_srvs[R_SBufferType_Game]);
         
         ID3D11DeviceContext_RSSetState(state->device_context, state->raster_fill_cull_ccw);
         ID3D11DeviceContext_RSSetViewports(state->device_context, 1, &viewport);
         
-        ID3D11DeviceContext_PSSetShader(state->device_context, state->game_pshader_nolight, null, 0);
+        ID3D11DeviceContext_PSSetShader(state->device_context, state->pshaders[R_PShaderType_GameWithoutLight], null, 0);
         
         ID3D11DeviceContext_OMSetDepthStencilState(state->device_context, state->ds_depth_only, 0);
         ID3D11DeviceContext_OMSetRenderTargets(state->device_context, 1, &state->back_buffer_rtv, state->main_dsv);
@@ -679,6 +918,49 @@ r_submit(R_State *state)
                                                    state->cube_model.indices_count,
                                                    (UINT)gwl->instances_count,
                                                    0, 0, 0);
+        }
+      } break;
+      
+      case R_PassType_UI:
+      {
+        R_Pass_UI *ui = &pass->ui;
+        
+        D3D11_MAPPED_SUBRESOURCE mapped_subrec;
+        ID3D11DeviceContext_Map(state->device_context, (ID3D11Resource *)state->sbuffers[R_SBufferType_UI], 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped_subrec);
+        CopyMemory(mapped_subrec.pData, ui->rects, mapped_subrec.RowPitch);
+        ID3D11DeviceContext_Unmap(state->device_context, (ID3D11Resource *)state->sbuffers[R_SBufferType_UI], 0);
+        
+        {
+          DX11_UI_VShader_Constants init_cbuffer =
+          {
+            m44_make_orthographic_z01(0, viewport.Width, 0, viewport.Height, 0, 1),
+          };
+          
+          ID3D11DeviceContext_Map(state->device_context, (ID3D11Resource *)state->cbuffers[R_CBufferType_UI_VShader0], 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped_subrec);
+          CopyMemory(mapped_subrec.pData, &init_cbuffer, mapped_subrec.RowPitch);
+          ID3D11DeviceContext_Unmap(state->device_context, (ID3D11Resource *)state->cbuffers[R_CBufferType_UI_VShader0], 0);
+        }
+        
+        ID3D11DeviceContext_IASetPrimitiveTopology(state->device_context, D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
+        
+        ID3D11DeviceContext_VSSetShader(state->device_context, state->vshaders[R_VShaderType_UI], null, 0);
+        ID3D11DeviceContext_VSSetConstantBuffers(state->device_context, 0, 1, &state->cbuffers[R_CBufferType_UI_VShader0]);
+        ID3D11DeviceContext_VSSetShaderResources(state->device_context, 0, 1, &state->sbuffer_srvs[R_SBufferType_UI]);
+        
+        ID3D11DeviceContext_RSSetState(state->device_context, state->raster_fill_nocull_ccw);
+        ID3D11DeviceContext_RSSetViewports(state->device_context, 1, &viewport);
+        
+        ID3D11DeviceContext_PSSetShader(state->device_context, state->pshaders[R_PShaderType_UI], null, 0);
+        ID3D11DeviceContext_PSSetShaderResources(state->device_context, 1, 1, &state->font.srv);
+        
+        ID3D11DeviceContext_OMSetRenderTargets(state->device_context, 1, &state->back_buffer_rtv, 0);
+        ID3D11DeviceContext_OMSetBlendState(state->device_context, (ID3D11BlendState *)state->blend_state_transparency, null, 0xffffffff);
+        
+        if (ui->count)
+        {
+          ID3D11DeviceContext_DrawInstanced(state->device_context, 4,
+                                            (UINT)ui->count,
+                                            0, 0);
         }
       } break;
       
@@ -766,4 +1048,88 @@ r_game_without_light_add_instance(R_Pass *pass, v3f p, v3f scale, v4f colour)
   result->scale = scale;
   result->colour = colour;
   return(result);
+}
+
+inline function R_Pass *
+r_acquire_ui_pass(R_State *state)
+{
+  R_Pass *result = r_acquire_pass(state, R_PassType_UI);
+  result->ui.font = &state->font;
+  return(result);
+}
+
+inline function R_UI_Rect *
+r_ui_acquire_rect(R_Pass *pass)
+{
+  Assert(pass->type == R_PassType_UI);
+  R_Pass_UI *ui = &pass->ui;
+  Assert(ui->count < R_MaxUIRects);
+  R_UI_Rect *result = ui->rects + ui->count++;
+  return(result);
+}
+
+function R_UI_Rect *
+r_ui_add_tex_clipped(R_Pass *pass, u32 tex_id, v2f p,
+                     v2f dims, v2f clip_p, v2f clip_dims,
+                     v4f colour)
+{
+  R_UI_Rect *result = r_ui_acquire_rect(pass);
+  result->tex_id = tex_id;
+  result->p = p;
+  result->dims = dims;
+  result->vertex_colour = colour;
+  
+  f32 x_start = clip_p.x / (f32)pass->ui.font->sheet_width;
+  f32 x_end = (clip_p.x + clip_dims.x) / (f32)pass->ui.font->sheet_width;
+  f32 y_start = clip_p.y / (f32)pass->ui.font->sheet_height;
+  f32 y_end = (clip_p.y + clip_dims.y) / (f32)pass->ui.font->sheet_height;
+  
+  result->uvs[0] = (v2f){ x_start, y_start };
+  result->uvs[1] = (v2f){ x_start, y_end };
+  result->uvs[2] = (v2f){ x_end, y_start };
+  result->uvs[3] = (v2f){ x_end, y_end };
+  
+  return(result);
+}
+
+function v2f
+r_ui_textf(R_Pass *pass, v2f p, v4f colour, String_U8_Const str, ...)
+{
+  M_Arena *temp_arena = m_get_for_transient_purposes(0, 0);
+  M_Temp temp = m_temp_begin(temp_arena);
+  
+  va_list args;
+  va_start(args, str);
+  String_U8_Const format = str8_format_va(temp_arena, str, args);
+  va_end(args);
+  
+  v2f final_dims = {0};
+  v2f pen_p = p;
+  for (u64 char_idx = 0; char_idx < format.count; ++char_idx)
+  {
+    u8 char_val = format.s[char_idx];
+    Assert((char_val >= 32) && (char_val < 128));
+    
+    R_Glyph glyph = pass->ui.font->glyphs[char_val];
+    if (char_val != ' ')
+    {
+      if (glyph.clip_height > final_dims.y)
+      {
+        final_dims.y = glyph.clip_height;
+      }
+      
+      final_dims.x += glyph.advance;
+      v2f glyph_p = { pen_p.x, pen_p.y };
+      v2f glyph_dims = { glyph.clip_width, glyph.clip_height, };
+      v2f glyph_clip_p = { glyph.clip_x, glyph.clip_y };
+      r_ui_add_tex_clipped(pass, 1, glyph_p,
+                           glyph_dims, glyph_clip_p,
+                           glyph_dims, colour);
+    }
+    
+    pen_p.x += glyph.advance;
+  }
+  
+  m_temp_end(temp);
+  return(final_dims);
 }

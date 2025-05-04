@@ -1,6 +1,7 @@
 #ifndef BASE_H
 #define BASE_H
 #include <stdint.h>
+#include <stdio.h>
 typedef uint8_t u8;
 typedef int8_t s8;
 typedef uint16_t u16;
@@ -61,14 +62,17 @@ function M_Arena *   m_arena_reserve(u64 cap);
 function void *      m_arena_push(M_Arena *arena, u64 size);
 function void        m_arena_pop(M_Arena *arena, u64 size);
 inline function void m_arena_clear(M_Arena *arena);
-function M_Arena *   m_get_for_transient_purposes(M_Arena **conflict, u64 count);
 
-#define str8(s) (String_Const_U8){(s),sizeof(s)-1,sizeof(s)-1}
+function M_Arena *          m_get_for_transient_purposes(M_Arena **conflict, u64 count);
+inline function M_Temp      m_temp_begin(M_Arena *arena);
+inline function void        m_temp_end(M_Temp temp);
+
+#define str8(s) (String_U8_Const){(u8*)(s),sizeof(s)-1,sizeof(s)-1}
 typedef struct
 {
   u8 *s;
   u64 count;
   u64 capacity;
-} String_Const_U8;
+} String_U8_Const;
 
 #endif //BASE_H
