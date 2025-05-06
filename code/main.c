@@ -81,6 +81,7 @@ typedef struct
   b32 player_can_move;
   f32 player_move_t;
   
+  b32 debug_wire_frame;
   G_Camera camera;
 } G_State;
 
@@ -372,7 +373,8 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PSTR lpCmd, int nShowCmd)
                                                           game_state.camera.y.x, game_state.camera.y.y, game_state.camera.y.z, -v3f_dot(game_state.camera.look_from, game_state.camera.y),
                                                           game_state.camera.z.x, game_state.camera.z.y, game_state.camera.z.z, -v3f_dot(game_state.camera.look_from, game_state.camera.z),
                                                           0.0f, 0.0f, 0.0f, 1.0f,
-                                                        });
+                                                        },
+                                                        game_state.debug_wire_frame);
     
     R_Light *point_light = r_game_with_light_add_point_light(light_pass, v3f_make(game_state.player_p.x, game_state.player_p.y + 2, game_state.player_p.z), v4f_make(1,1,1,1));
     {
@@ -489,7 +491,8 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PSTR lpCmd, int nShowCmd)
                                                                 game_state.camera.y.x, game_state.camera.y.y, game_state.camera.y.z, -v3f_dot(game_state.camera.look_from, game_state.camera.y),
                                                                 game_state.camera.z.x, game_state.camera.z.y, game_state.camera.z.z, -v3f_dot(game_state.camera.look_from, game_state.camera.z),
                                                                 0.0f, 0.0f, 0.0f, 1.0f,
-                                                              });
+                                                              },
+                                                              game_state.debug_wire_frame);
     
     
     r_game_without_light_add_instance(no_light_pass,
@@ -516,7 +519,7 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PSTR lpCmd, int nShowCmd)
                light_pass->withlight.instances_count);
     
     {
-      String_U8_Const str = str8("Debug Cam (SPACE): %s");
+      String_U8_Const str = str8("Camera Roam (O): %s");
       v2f mouse_p = v2f_make((f32)input->mouse_x, (f32)input->mouse_y);
       v2f text_p = v2f_make(0, 28*4);
       v2f text_dims = r_ui_get_text_dims(ui_pass, str, game_state.camera.debug_cam ? "True" : "False");
@@ -524,7 +527,7 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PSTR lpCmd, int nShowCmd)
       f32 max_x = text_p.x + text_dims.x;
       f32 max_y = text_p.y + text_dims.y;
       
-      if (OS_KeyReleased(input, OS_Input_KeyType_Space))
+      if (OS_KeyReleased(input, OS_Input_KeyType_O))
       {
         game_state.camera.debug_cam = !game_state.camera.debug_cam;
       }
@@ -543,6 +546,37 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PSTR lpCmd, int nShowCmd)
       {
         r_ui_textf(ui_pass, text_p, v4f_make(1,1,1,1), str, 
                    game_state.camera.debug_cam ? "True" : "False");
+      }
+    }
+    
+    {
+      String_U8_Const str = str8("WireFrame (P): %s");
+      v2f mouse_p = v2f_make((f32)input->mouse_x, (f32)input->mouse_y);
+      v2f text_p = v2f_make(0, 28*5);
+      v2f text_dims = r_ui_get_text_dims(ui_pass, str, game_state.debug_wire_frame ? "True" : "False");
+      
+      f32 max_x = text_p.x + text_dims.x;
+      f32 max_y = text_p.y + text_dims.y;
+      
+      if (OS_KeyReleased(input, OS_Input_KeyType_P))
+      {
+        game_state.debug_wire_frame = !game_state.debug_wire_frame;
+      }
+      
+      if ((mouse_p.x <= max_x) && (mouse_p.x >= text_p.x) &&
+          (mouse_p.y <= max_y) && (mouse_p.y >= text_p.y))
+      {
+        if (OS_ButtonReleased(input, OS_Input_ButtonType_Left))
+        {
+          game_state.debug_wire_frame = !game_state.debug_wire_frame;
+        }
+        r_ui_textf(ui_pass, text_p, v4f_make(1,0,0,1), str, 
+                   game_state.debug_wire_frame ? "True" : "False");
+      }
+      else
+      {
+        r_ui_textf(ui_pass, text_p, v4f_make(1,1,1,1), str, 
+                   game_state.debug_wire_frame ? "True" : "False");
       }
     }
     

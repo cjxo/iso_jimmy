@@ -852,7 +852,14 @@ r_submit(R_State *state)
         ID3D11DeviceContext_VSSetConstantBuffers(state->device_context, 0, 1, &state->cbuffers[R_CBufferType_Game_VShader0]);
         ID3D11DeviceContext_VSSetShaderResources(state->device_context, 0, 1, &state->sbuffer_srvs[R_SBufferType_Game]);
         
-        ID3D11DeviceContext_RSSetState(state->device_context, state->raster_fill_cull_ccw);
+        if (gwl->wire_frame)
+        {
+          ID3D11DeviceContext_RSSetState(state->device_context, state->raster_wire_cull_ccw);
+        }
+        else
+        {
+          ID3D11DeviceContext_RSSetState(state->device_context, state->raster_fill_cull_ccw);
+        }
         ID3D11DeviceContext_RSSetViewports(state->device_context, 1, &viewport);
         
         ID3D11DeviceContext_PSSetShader(state->device_context, state->pshaders[R_PShaderType_GameWithLight], null, 0);
@@ -902,7 +909,14 @@ r_submit(R_State *state)
         ID3D11DeviceContext_VSSetConstantBuffers(state->device_context, 0, 1, &state->cbuffers[R_CBufferType_Game_VShader0]);
         ID3D11DeviceContext_VSSetShaderResources(state->device_context, 0, 1, &state->sbuffer_srvs[R_SBufferType_Game]);
         
-        ID3D11DeviceContext_RSSetState(state->device_context, state->raster_fill_cull_ccw);
+        if (gwl->wire_frame)
+        {
+          ID3D11DeviceContext_RSSetState(state->device_context, state->raster_wire_cull_ccw);
+        }
+        else
+        {
+          ID3D11DeviceContext_RSSetState(state->device_context, state->raster_fill_cull_ccw);
+        }
         ID3D11DeviceContext_RSSetViewports(state->device_context, 1, &viewport);
         
         ID3D11DeviceContext_PSSetShader(state->device_context, state->pshaders[R_PShaderType_GameWithoutLight], null, 0);
@@ -988,21 +1002,23 @@ r_acquire_pass(R_State *state, R_PassType type)
 }
 
 function R_Pass *
-r_acquire_game_with_light_pass(R_State *state, v3f camera_p, m44 perspective, m44 world_to_camera)
+r_acquire_game_with_light_pass(R_State *state, v3f camera_p, m44 perspective, m44 world_to_camera, b32 wire_frame)
 {
   R_Pass *result = r_acquire_pass(state, R_PassType_GameRenderWithLight);
   result->withlight.camera_p = camera_p;
   result->withlight.perspective = perspective;
   result->withlight.world_to_camera = world_to_camera;
+  result->withlight.wire_frame = wire_frame;
   return(result);
 }
 
 function R_Pass *
-r_acquire_game_without_light_pass(R_State *state, m44 perspective, m44 world_to_camera)
+r_acquire_game_without_light_pass(R_State *state, m44 perspective, m44 world_to_camera, b32 wire_frame)
 {
   R_Pass *result = r_acquire_pass(state, R_PassType_GameRenderWithoutLight);
   result->withoutlight.perspective = perspective;
   result->withoutlight.world_to_camera = world_to_camera;
+  result->withoutlight.wire_frame = wire_frame;
   return(result);
 }
 

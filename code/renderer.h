@@ -78,6 +78,8 @@ typedef struct
   
   v3f camera_p;
   m44 perspective, world_to_camera;
+  
+  b32 wire_frame;
 } R_Pass_GameWithLight;
 
 typedef struct
@@ -86,6 +88,8 @@ typedef struct
   u64 instances_count;
   
   m44 perspective, world_to_camera;
+  
+  b32 wire_frame;
 } R_Pass_GameWithoutLight;
 
 typedef struct
@@ -212,10 +216,10 @@ function void r_submit(R_State *state);
 
 function R_Pass *r_acquire_pass(R_State *state, R_PassType type);
 
-function R_Pass *r_acquire_game_with_light_pass(R_State *state, v3f camera_p, m44 perspective, m44 world_to_camera);
+function R_Pass *r_acquire_game_with_light_pass(R_State *state, v3f camera_p, m44 perspective, m44 world_to_camera, b32 wire_frame);
 function R_Model_Instance *r_game_with_light_add_instance(R_Pass *pass, v3f p, v3f scale, v4f colour);
 
-function R_Pass *r_acquire_game_without_light_pass(R_State *state, m44 perspective, m44 world_to_camera);
+function R_Pass *r_acquire_game_without_light_pass(R_State *state, m44 perspective, m44 world_to_camera, b32 wire_frame);
 function R_Model_Instance *r_game_without_light_add_instance(R_Pass *pass, v3f p, v3f scale, v4f colour);
 
 inline function R_Pass *r_acquire_ui_pass(R_State *state);
