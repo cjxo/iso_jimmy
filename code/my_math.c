@@ -35,6 +35,14 @@ v3f_sub(v3f a, v3f b)
   return(result);
 }
 
+inline function void
+v3f_sub_eq(v3f *a, v3f b)
+{
+  a->x -= b.x;
+  a->y -= b.y;
+  a->z -= b.z;
+}
+
 inline function v3f
 v3f_add(v3f a, v3f b)
 {
@@ -43,6 +51,14 @@ v3f_add(v3f a, v3f b)
   result.y = a.y + b.y;
   result.z = a.z + b.z;
   return(result);
+}
+
+inline function void
+v3f_add_eq(v3f *a, v3f b)
+{
+  a->x += b.x;
+  a->y += b.y;
+  a->z += b.z;
 }
 
 inline function v3f

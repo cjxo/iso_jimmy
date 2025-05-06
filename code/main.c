@@ -8,6 +8,7 @@
 #include <dxgi.h>
 #include <dxgi1_2.h>
 #include <d3dcompiler.h>
+#include <Windowsx.h>
 #if defined(ISO_DEBUG)
 # include <dxgidebug.h>
 #endif
@@ -51,6 +52,11 @@ typedef struct
   f32 aspect;
   f32 lock_strength;
   
+  b32 debug_cam;
+  f32 debug_lock_strength;
+  v3f debug_cam_p;
+  f32 debug_cam_no, debug_cam_yes;
+  
   v3f x, y, z;
   
   Plane near_plane;
@@ -79,6 +85,23 @@ typedef struct
 } G_State;
 
 function void
+g_cam_init(G_Camera *camera, v3f init_p, f32 camera_aspect)
+{
+  camera->look_to = init_p;
+  camera->near_z = 1.0f;
+  camera->far_z = 50.0f;
+  camera->fov_rad = DegToRad(66.2f);
+  camera->lock_strength = 0.03f;
+  camera->aspect = camera_aspect;
+  
+  camera->debug_lock_strength = 0.15f;
+  camera->debug_cam = false;
+  camera->debug_cam_p = init_p;
+  camera->debug_cam_no = 90;
+  camera->debug_cam_yes = 90;
+}
+
+function void
 g_init(G_State *state, M_Arena *arena, f32 camera_aspect)
 {
   state->arena = arena;
@@ -103,27 +126,83 @@ g_init(G_State *state, M_Arena *arena, f32 camera_aspect)
   state->player_can_move = true;
   state->player_move_t = 0.0f;
   
-  state->camera.look_to = state->player_p;
-  state->camera.near_z = 1.0f;
-  state->camera.far_z = 50.0f;
-  state->camera.fov_rad = DegToRad(66.2f);
-  state->camera.lock_strength = 0.03f;
-  state->camera.aspect = camera_aspect;
+  g_cam_init(&state->camera, state->player_p, camera_aspect);
 }
 
 function void
-g_update_camera(G_Camera *cam, v3f look_to_update)
+g_update_camera(G_Camera *cam, OS_Window window, OS_Input *input, v3f look_to_update, f32 game_update_secs)
 {
   v3f camera_look, camera_up;
   v3f a;
   
-  cam->look_to.x = cam->look_to.x * (1.0f - cam->lock_strength) + cam->lock_strength * look_to_update.x;
-  cam->look_to.y = 0;
-  cam->look_to.z = cam->look_to.z * (1.0f - cam->lock_strength) + cam->lock_strength * look_to_update.z;
-  
-  cam->look_from = v3f_make(cam->look_to.x + 15, 15, cam->look_to.z - 15);
-  camera_look = v3f_sub(cam->look_to, cam->look_from);
-  camera_up = v3f_make(0, 1, 0);
+  if (cam->debug_cam)
+  {
+    POINT middle;
+    middle.x = 1280 / 2;
+    middle.y = 720 / 2;
+    
+    POINT middle2 = middle;
+    ClientToScreen(window.handle, &middle2);
+    SetCursorPos(middle2.x, middle2.y);
+    
+    f32 camera_sens = 6.0f;
+    f32 mouse_delta_x = (f32)((f32)middle.x - input->mouse_x) * camera_sens * game_update_secs;
+    f32 mouse_delta_y = (f32)(input->mouse_y - (f32)middle.y) * camera_sens * game_update_secs;
+    
+    cam->debug_cam_yes += mouse_delta_y;
+    cam->debug_cam_no += mouse_delta_x;
+    if (cam->debug_cam_yes < -179.0f)
+    {
+      cam->debug_cam_yes = -179.0f;
+    }
+    
+    if (cam->debug_cam_yes > 179.0f)
+    {
+      cam->debug_cam_yes = 179.0f;
+    }
+    
+    if (cam->debug_cam_no > 360.0f)
+    {
+      cam->debug_cam_no = 0.0f;
+    }
+    
+    if (cam->debug_cam_no < 0.0f)
+    {
+      cam->debug_cam_no = 360.0f;
+    } 
+    
+    f32 yz = DegToRad(cam->debug_cam_yes);
+    f32 xz = DegToRad(cam->debug_cam_no);
+    f32 y = cosf(yz);
+    f32 x = cosf(xz)*sinf(yz);
+    f32 z = sinf(yz)*sinf(xz);
+    
+    cam->look_from.x = cam->look_from.x * (1.0f-cam->debug_lock_strength) + cam->debug_lock_strength*cam->debug_cam_p.x;
+    cam->look_from.y = cam->look_from.y * (1.0f-cam->debug_lock_strength) + cam->debug_lock_strength*cam->debug_cam_p.y;
+    cam->look_from.z = cam->look_from.z * (1.0f-cam->debug_lock_strength) + cam->debug_lock_strength*cam->debug_cam_p.z;
+    
+    cam->look_to.x = cam->look_to.x * (1.0f-cam->debug_lock_strength) + cam->debug_lock_strength*(cam->look_from.x + x);
+    cam->look_to.y = cam->look_to.y * (1.0f-cam->debug_lock_strength) + cam->debug_lock_strength*(cam->look_from.y + y);
+    cam->look_to.z = cam->look_to.z * (1.0f-cam->debug_lock_strength) + cam->debug_lock_strength*(cam->look_from.z + z);
+    
+    camera_look = v3f_normalize_or_zero(v3f_make(x,y,z));
+    camera_up = v3f_make(0, 1, 0);
+  }
+  else
+  {
+    cam->look_to.x = cam->look_to.x * (1.0f - cam->lock_strength) + cam->lock_strength * look_to_update.x;
+    cam->look_to.y = 0;
+    cam->look_to.z = cam->look_to.z * (1.0f - cam->lock_strength) + cam->lock_strength * look_to_update.z;
+    
+    v3f desired_look_from = v3f_make(cam->look_to.x + 15, 15, cam->look_to.z - 15);
+    //cam->look_from = v3f_make(cam->look_to.x + 15, 15, cam->look_to.z - 15);
+    cam->look_from.x = desired_look_from.x*(1.0f - cam->lock_strength) + cam->lock_strength*desired_look_from.x;
+    cam->look_from.y = desired_look_from.y*(1.0f - cam->lock_strength) + cam->lock_strength*desired_look_from.y;
+    cam->look_from.z = desired_look_from.z*(1.0f - cam->lock_strength) + cam->lock_strength*desired_look_from.z;
+    
+    camera_look = v3f_sub(cam->look_to, cam->look_from);
+    camera_up = v3f_make(0, 1, 0);
+  }
   
   a = v3f_scale(v3f_dot(camera_up, camera_look) / v3f_dot(camera_look, camera_look), camera_look);
   cam->z = v3f_normalize_or_zero(camera_look);
@@ -155,6 +234,41 @@ g_update_camera(G_Camera *cam, v3f look_to_update)
   v3f bottom_n = v3f_cross(v3f_add(cam->z, v3f_scale(-top, cam->y)), cam->x);
   bottom_n = v3f_normalize_or_zero(bottom_n);
   cam->bottom_plane = plane_create(cam->look_from, bottom_n);
+  
+  if (cam->debug_cam)
+  {
+    
+    f32 move_units = 5.0f*game_update_secs;
+    if (OS_KeyHeld(input, OS_Input_KeyType_W))
+    {
+      v3f_add_eq(&cam->debug_cam_p, v3f_scale(move_units, cam->z));
+    }
+    
+    if (OS_KeyHeld(input, OS_Input_KeyType_A))
+    {
+      v3f_sub_eq(&cam->debug_cam_p, v3f_scale(move_units, cam->x));
+    }
+    
+    if (OS_KeyHeld(input, OS_Input_KeyType_S))
+    {
+      v3f_sub_eq(&cam->debug_cam_p, v3f_scale(move_units, cam->z));
+    }
+    
+    if (OS_KeyHeld(input, OS_Input_KeyType_D))
+    {
+      v3f_add_eq(&cam->debug_cam_p, v3f_scale(move_units, cam->x));
+    }
+    
+    if (OS_KeyHeld(input, OS_Input_KeyType_E))
+    {
+      v3f_add_eq(&cam->debug_cam_p, v3f_scale(move_units, cam->y));
+    }
+    
+    if (OS_KeyHeld(input, OS_Input_KeyType_Q))
+    {
+      v3f_sub_eq(&cam->debug_cam_p, v3f_scale(move_units, cam->y));
+    }
+  }
 }
 
 int __stdcall
@@ -198,29 +312,32 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PSTR lpCmd, int nShowCmd)
     
     if (game_state.player_can_move)
     {
-      f32 move_units = 1.0f;
-      if (OS_KeyHeld(input, OS_Input_KeyType_W))
+      if (!game_state.camera.debug_cam)
       {
-        game_state.player_requested_move.z += move_units;
-        game_state.player_can_move = false;
-      }
-      
-      if (OS_KeyHeld(input, OS_Input_KeyType_S))
-      {
-        game_state.player_requested_move.z -= move_units;
-        game_state.player_can_move = false;
-      }
-      
-      if (OS_KeyHeld(input, OS_Input_KeyType_A))
-      {
-        game_state.player_requested_move.x -= move_units;
-        game_state.player_can_move = false;
-      }
-      
-      if (OS_KeyHeld(input, OS_Input_KeyType_D))
-      {
-        game_state.player_requested_move.x += move_units;
-        game_state.player_can_move = false;
+        f32 move_units = 1.0f;
+        if (OS_KeyHeld(input, OS_Input_KeyType_W))
+        {
+          game_state.player_requested_move.z += move_units;
+          game_state.player_can_move = false;
+        }
+        
+        if (OS_KeyHeld(input, OS_Input_KeyType_S))
+        {
+          game_state.player_requested_move.z -= move_units;
+          game_state.player_can_move = false;
+        }
+        
+        if (OS_KeyHeld(input, OS_Input_KeyType_A))
+        {
+          game_state.player_requested_move.x -= move_units;
+          game_state.player_can_move = false;
+        }
+        
+        if (OS_KeyHeld(input, OS_Input_KeyType_D))
+        {
+          game_state.player_requested_move.x += move_units;
+          game_state.player_can_move = false;
+        }
       }
     }
     else
@@ -243,7 +360,7 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PSTR lpCmd, int nShowCmd)
       }
     }
     
-    g_update_camera(&game_state.camera, game_state.player_p);
+    g_update_camera(&game_state.camera, window, input, game_state.player_p, seconds_per_frame);
     
     R_Pass *light_pass = r_acquire_game_with_light_pass(&renderer_state, 
                                                         game_state.camera.look_from,
@@ -380,14 +497,8 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PSTR lpCmd, int nShowCmd)
                                       v3f_make(0.2f, 0.2f, 0.2f),
                                       point_light->colour);
     
-    {
-      char format[512];
-      wsprintfA(format, "count: %lu\n", light_pass->withlight.instances_count);
-      OutputDebugStringA(format);
-    }
-    
     R_Pass *ui_pass = r_acquire_ui_pass(&renderer_state);
-    r_ui_textf(ui_pass, v2f_make(0, 0), v4f_make(1,1,1,1), str8("DEBUG"));
+    r_ui_textf(ui_pass, v2f_make(0, 0), v4f_make(1,0,1,1), str8("----------------------------- DEBUG -----------------------------"));
     r_ui_textf(ui_pass, v2f_make(0, 28), v4f_make(1,1,1,1),
                str8("Player World Coord: <%.2f, %.2f, %.2f>"),
                game_state.player_p.x,
@@ -395,8 +506,46 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PSTR lpCmd, int nShowCmd)
                game_state.player_p.z);
     
     r_ui_textf(ui_pass, v2f_make(0, 28*2), v4f_make(1,1,1,1),
+               str8("Camera World Coord: <%.2f, %.2f, %.2f>"), 
+               game_state.camera.look_from.x,
+               game_state.camera.look_from.y,
+               game_state.camera.look_from.z);
+    
+    r_ui_textf(ui_pass, v2f_make(0, 28*3), v4f_make(1,1,1,1),
                str8("Active Blocks: %llu"), 
                light_pass->withlight.instances_count);
+    
+    {
+      String_U8_Const str = str8("Debug Cam (SPACE): %s");
+      v2f mouse_p = v2f_make((f32)input->mouse_x, (f32)input->mouse_y);
+      v2f text_p = v2f_make(0, 28*4);
+      v2f text_dims = r_ui_get_text_dims(ui_pass, str, game_state.camera.debug_cam ? "True" : "False");
+      
+      f32 max_x = text_p.x + text_dims.x;
+      f32 max_y = text_p.y + text_dims.y;
+      
+      if (OS_KeyReleased(input, OS_Input_KeyType_Space))
+      {
+        game_state.camera.debug_cam = !game_state.camera.debug_cam;
+      }
+      
+      if ((mouse_p.x <= max_x) && (mouse_p.x >= text_p.x) &&
+          (mouse_p.y <= max_y) && (mouse_p.y >= text_p.y))
+      {
+        if (OS_ButtonReleased(input, OS_Input_ButtonType_Left))
+        {
+          game_state.camera.debug_cam = !game_state.camera.debug_cam;
+        }
+        r_ui_textf(ui_pass, text_p, v4f_make(1,0,0,1), str, 
+                   game_state.camera.debug_cam ? "True" : "False");
+      }
+      else
+      {
+        r_ui_textf(ui_pass, text_p, v4f_make(1,1,1,1), str, 
+                   game_state.camera.debug_cam ? "True" : "False");
+      }
+    }
+    
     r_submit(&renderer_state);
   }
   

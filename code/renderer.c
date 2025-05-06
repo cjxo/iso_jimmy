@@ -1093,6 +1093,38 @@ r_ui_add_tex_clipped(R_Pass *pass, u32 tex_id, v2f p,
 }
 
 function v2f
+r_ui_get_text_dims(R_Pass *pass, String_U8_Const str, ...)
+{
+  M_Arena *temp_arena = m_get_for_transient_purposes(0, 0);
+  M_Temp temp = m_temp_begin(temp_arena);
+  
+  va_list args;
+  va_start(args, str);
+  String_U8_Const format = str8_format_va(temp_arena, str, args);
+  va_end(args);
+  
+  v2f final_dims = {0};
+  for (u64 char_idx = 0; char_idx < format.count; ++char_idx)
+  {
+    u8 char_val = format.s[char_idx];
+    Assert((char_val >= 32) && (char_val < 128));
+    
+    R_Glyph glyph = pass->ui.font->glyphs[char_val];
+    if (char_val != ' ')
+    {
+      if (glyph.clip_height > final_dims.y)
+      {
+        final_dims.y = glyph.clip_height;
+      }
+    }
+    final_dims.x += glyph.advance;
+  }
+  
+  m_temp_end(temp);
+  return(final_dims);
+}
+
+function v2f
 r_ui_textf(R_Pass *pass, v2f p, v4f colour, String_U8_Const str, ...)
 {
   M_Arena *temp_arena = m_get_for_transient_purposes(0, 0);
@@ -1118,7 +1150,6 @@ r_ui_textf(R_Pass *pass, v2f p, v4f colour, String_U8_Const str, ...)
         final_dims.y = glyph.clip_height;
       }
       
-      final_dims.x += glyph.advance;
       v2f glyph_p = { pen_p.x, pen_p.y };
       v2f glyph_dims = { glyph.clip_width, glyph.clip_height, };
       v2f glyph_clip_p = { glyph.clip_x, glyph.clip_y };
@@ -1126,7 +1157,7 @@ r_ui_textf(R_Pass *pass, v2f p, v4f colour, String_U8_Const str, ...)
                            glyph_dims, glyph_clip_p,
                            glyph_dims, colour);
     }
-    
+    final_dims.x += glyph.advance;
     pen_p.x += glyph.advance;
   }
   

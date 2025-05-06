@@ -224,5 +224,6 @@ function R_UI_Rect *r_ui_add_tex_clipped(R_Pass *pass, u32 tex_id, v2f p,
                                          v2f dims, v2f clip_p, v2f clip_dims,
                                          v4f colour);
 function v2f r_ui_textf(R_Pass *pass, v2f p, v4f colour, String_U8_Const str, ...);
+function v2f r_ui_get_text_dims(R_Pass *pass, String_U8_Const str, ...);
 
 #endif //RENDERER_H

@@ -36,13 +36,15 @@ typedef union
   f32 v[3];
 } v3f;
 
-inline function v3f v3f_make(f32 x, f32 y, f32 z);
-inline function v3f v3f_sub(v3f a, v3f b);
-inline function v3f v3f_add(v3f a, v3f b);
-inline function v3f v3f_sub_and_normalize_or_zero(v3f a, v3f b);
-inline function v3f v3f_normalize_or_zero(v3f a);
-inline function f32 v3f_dot(v3f a, v3f b);
-inline function v3f v3f_additive_inverse(v3f a);
+inline function v3f  v3f_make(f32 x, f32 y, f32 z);
+inline function v3f  v3f_sub(v3f a, v3f b);
+inline function void v3f_sub_eq(v3f *a, v3f b);
+inline function v3f  v3f_add(v3f a, v3f b);
+inline function void v3f_add_eq(v3f *a, v3f b);
+inline function v3f  v3f_sub_and_normalize_or_zero(v3f a, v3f b);
+inline function v3f  v3f_normalize_or_zero(v3f a);
+inline function f32  v3f_dot(v3f a, v3f b);
+inline function v3f  v3f_additive_inverse(v3f a);
 
 typedef union
 {
