@@ -68,7 +68,9 @@ float4 ps_main(VS_Output ps_inp) : SV_Target
 	float4 c_accum = float4(0, 0, 0, 0);
 	
 	float3 N = normalize(ps_inp.normal);
-	float3 V = normalize(g_eye_p_in_world - ps_inp.world_p);
+	float3 V = g_eye_p_in_world - ps_inp.world_p;
+	float V_d = length(V);
+	V /= V_d;
 
 	Light light = g_lights[0];
 	switch (light.type)
@@ -96,7 +98,15 @@ float4 ps_main(VS_Output ps_inp) : SV_Target
 
 	float4 c_ambient = float4(0.05,0.05,0.05,1);
 	c_final = saturate(c_ambient * ps_inp.colour + c_accum);
-	
+
+#if 0
+	float4 c_fog = float4(1,1,1,1);
+	float fog_density = 99999.0f;
+	float fog_start = 5;
+	float fog_end = 40;
+	float fog_lerp = saturate((V_d - fog_start) / fog_end);
+	c_final = lerp(c_final, c_fog,fog_lerp);
+#endif
 	return(c_final);
 }
 
