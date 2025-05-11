@@ -1,10 +1,13 @@
 #define LightType_PointLight 0
+#define LightType_DirectionalLight 1
 #define LightCount_Max 8
 struct Light
 {
 	float3 p;
 	uint type;
 	float4 colour;
+	float3 dir;
+	float pad_a[1];
 };
 
 cbuffer VertexShader_Constants : register(b0)
@@ -72,6 +75,11 @@ float4 ps_main(VS_Output ps_inp) : SV_Target
 	float V_d = length(V);
 	V /= V_d;
 
+	float M_diffuse     = 1.0f;
+  float M_specular    = 0.5f;
+  float M_ambient     = 1.0f;
+  float M_shininess   = 8.0f;
+
 	Light light = g_lights[0];
 	switch (light.type)
 	{
@@ -90,13 +98,24 @@ float4 ps_main(VS_Output ps_inp) : SV_Target
 			float N_dot_L = max(dot(N, L), 0);
 			//float R_dot_V = max(dot(normalize(L + V), N), 0);
 			float R_dot_V = max(dot(R, V), 0);
-			float4 specular = pow(R_dot_V, 4) * light.colour;
-			float4 diffuse = N_dot_L * light.colour * ps_inp.colour;
+			float4 specular = M_specular * pow(R_dot_V, M_shininess) * light.colour;
+			float4 diffuse = M_diffuse * N_dot_L * light.colour * ps_inp.colour;
 			c_accum = saturate((diffuse + specular)*atten + c_accum);
+		} break;
+
+		case LightType_DirectionalLight:
+		{
+			float3 L = normalize(light.dir);
+			float3 R = normalize(reflect(L, N));
+			float N_dot_L = max(dot(N, -L), 0);
+			float R_dot_V = max(dot(R, V), 0);
+			float4 specular = M_specular * pow(R_dot_V, M_shininess) * light.colour;
+			float4 diffuse = M_diffuse * N_dot_L * light.colour * ps_inp.colour;
+			c_accum = saturate((diffuse + specular) + c_accum);
 		} break;
 	}
 
-	float4 c_ambient = float4(0.05,0.05,0.05,1);
+	float4 c_ambient = float4(0.05,0.05,0.05,1) * M_ambient;
 	c_final = saturate(c_ambient * ps_inp.colour + c_accum);
 
 #if 0

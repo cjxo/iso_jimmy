@@ -1051,6 +1051,20 @@ r_game_with_light_add_point_light(R_Pass *pass, v3f p, v4f colour)
   return(result);
 }
 
+function R_Light *
+r_game_with_light_add_directional_light(R_Pass *pass, v3f dir, v4f colour)
+{
+  Assert(pass->type == R_PassType_GameRenderWithLight);
+  R_Pass_GameWithLight *gwl = &(pass->withlight);
+  Assert(gwl->lights_count < R_LightCount_Max);
+  
+  R_Light *result = gwl->lights + gwl->lights_count++;
+  result->dir = dir;
+  result->type = R_LightType_DirectionalLight;
+  result->colour = colour;
+  return(result);
+}
+
 function R_Model_Instance *
 r_game_without_light_add_instance(R_Pass *pass, v3f p, v3f scale, v4f colour)
 {

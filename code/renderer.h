@@ -40,14 +40,17 @@ typedef u32 R_LightType;
 enum
 {
   R_LightType_PointLight,
+  R_LightType_DirectionalLight,
   R_LightType_Count,
 };
 
 typedef struct
 {
   v3f p;//world coordinate
-  R_LightType type;
+  u32 type;
   v4f colour;
+  v3f dir;
+  f32 pad_a[1];
 } R_Light;
 
 typedef struct

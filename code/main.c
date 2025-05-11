@@ -497,7 +497,8 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PSTR lpCmd, int nShowCmd)
                                                         },
                                                         game_state.debug_wire_frame);
     
-    R_Light *point_light = r_game_with_light_add_point_light(light_pass, v3f_make(game_state.player_p.x, game_state.player_p.y + 2, game_state.player_p.z), v4f_make(1,1,1,1));
+    //R_Light *point_light = r_game_with_light_add_point_light(light_pass, v3f_make(game_state.player_p.x, game_state.player_p.y + 2, game_state.player_p.z), v4f_make(1,1,1,1));
+    r_game_with_light_add_directional_light(light_pass, v3f_make(0.0f, -1.0f, 1.0f), v4f_make(0.7f, 0.7f, 0.7f, 1.0f));
     {
       G_Camera cam = game_state.camera;
       for (u64 block_z = 0; block_z < G_ChunkDims_Z; ++block_z)
@@ -611,6 +612,7 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PSTR lpCmd, int nShowCmd)
                                    RGBA(94.0f, 68.0f, 121.0f, 1.0f));
     
     
+#if 0
     R_Pass *no_light_pass = r_acquire_game_without_light_pass(&renderer_state, 
                                                               m44_perspective_dx11(game_state.camera.aspect, game_state.camera.fov_rad,
                                                                                    game_state.camera.near_z, game_state.camera.far_z),
@@ -624,10 +626,12 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PSTR lpCmd, int nShowCmd)
                                                               game_state.debug_wire_frame);
     
     
+    
     r_game_without_light_add_instance(no_light_pass,
                                       point_light->p,
                                       v3f_make(0.2f, 0.2f, 0.2f),
                                       point_light->colour);
+#endif
     
     R_Pass *ui_pass = r_acquire_ui_pass(&renderer_state);
     r_ui_textf(ui_pass, v2f_make(0, 0), v4f_make(1,0,1,1), str8("----------------------------- DEBUG -----------------------------"));
