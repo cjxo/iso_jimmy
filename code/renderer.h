@@ -64,36 +64,30 @@ typedef struct
 typedef u64 R_PassType;
 enum
 {
-  R_PassType_GameRenderWithLight,
-  R_PassType_GameRenderWithoutLight,
+  R_PassType_Game_WithLight,
+  R_PassType_Game_Shadow,
+  R_PassType_Game_WithoutLight,
   R_PassType_UI,
   R_PassType_Count,
 };
 
 #define R_MaxModelInstances 2048*8
-typedef struct
-{
-  R_Model_Instance instances[R_MaxModelInstances];
-  u64 instances_count;
-  
-  R_Light lights[R_LightCount_Max];
-  u64 lights_count;
-  
-  v3f camera_p;
-  m44 perspective, world_to_camera;
-  
-  b32 wire_frame;
-} R_Pass_GameWithLight;
 
 typedef struct
 {
   R_Model_Instance instances[R_MaxModelInstances];
   u64 instances_count;
   
-  m44 perspective, world_to_camera;
+  v3f camera_p;
+  R_Light light;
+  m44 projection;
+  m44 world_to_camera;
+  
+  m44 light_proj;
+  m44 world_to_light;
   
   b32 wire_frame;
-} R_Pass_GameWithoutLight;
+} R_Pass_Game;
 
 typedef struct
 {
@@ -117,10 +111,10 @@ typedef struct R_Pass R_Pass;
 struct R_Pass
 {
   R_PassType type;
+  
   union
   {
-    R_Pass_GameWithLight withlight;
-    R_Pass_GameWithoutLight withoutlight;
+    R_Pass_Game game;
     R_Pass_UI ui;
   };
   R_Pass *next;
@@ -130,13 +124,15 @@ typedef struct
 {
   m44 proj;
   m44 world_to_camera;
+  m44 light_proj;
+  m44 world_to_light;
 } DX11_VertexShader_Constants;
 
-typedef struct
+__declspec(align(16)) typedef struct
 {
+	R_Light light;
   v3f eye_p_in_world;
-  u32 lights_count;
-	R_Light lights[R_LightCount_Max];
+  f32 pad_a[1];
 } DX11_PixelShader_Constants;
 
 typedef struct
@@ -144,9 +140,19 @@ typedef struct
   m44 proj;
 } DX11_UI_VShader_Constants;
 
+#define R_SSAO_SampleCount 64
+__declspec(align(16)) typedef struct
+{
+  v4f far_plane_ptr[4], samples_for_ssao[R_SSAO_SampleCount];
+} DX11_SSAO_Constants1;
+
 typedef enum
 {
   R_VShaderType_Game,
+  R_VShaderType_GameShadows,
+  R_VShaderType_GameSSAO_Accum,
+  R_VShaderType_GameSSAO,
+  R_VShaderType_GameSSAO_Blur,
   R_VShaderType_UI,
   R_VShaderType_Count,
 } R_VShaderType;
@@ -155,6 +161,9 @@ typedef enum
 {
   R_PShaderType_GameWithLight,
   R_PShaderType_GameWithoutLight,
+  R_PShaderType_GameSSAO_Accum,
+  R_PShaderType_GameSSAO,
+  R_PShaderType_GameSSAO_Blur,
   R_PShaderType_UI,
   R_PShaderType_Count,
 } R_PShaderType;
@@ -170,6 +179,7 @@ typedef enum
 {
   R_CBufferType_Game_VShader0,
   R_CBufferType_Game_PShader0,
+  R_CBufferType_GameSSAO1,
   R_CBufferType_UI_VShader0,
   R_CBufferType_Count,
 } R_CBufferType;
@@ -199,12 +209,33 @@ typedef struct
   ID3D11DepthStencilState *ds_depth_only;
   ID3D11BlendState1 *blend_state_transparency;
   
+  ID3D11SamplerState *point_sampler_clamp;
+  ID3D11SamplerState *point_sampler_wrap;
+  ID3D11SamplerState *point_sampler_border_black;
+  
   ID3D11VertexShader *vshaders[R_VShaderType_Count];
   ID3D11PixelShader *pshaders[R_PShaderType_Count];
   ID3D11Buffer *sbuffers[R_SBufferType_Count];
   ID3D11ShaderResourceView *sbuffer_srvs[R_SBufferType_Count];
   ID3D11Buffer *cbuffers[R_CBufferType_Count];
   ID3D11InputLayout *input_layouts[R_InputLayoutType_Count];
+  
+  // TODO(cj): We need this for deferred rendering.
+  // for now, we want SSAO working!
+  ID3D11RenderTargetView *scene_normals_rtv;
+  ID3D11RenderTargetView *scene_ssao_rtv;
+  ID3D11RenderTargetView *scene_ssao_blur_rtv;
+  ID3D11ShaderResourceView *scene_normals_srv;
+  ID3D11ShaderResourceView *scene_ssao_srv;
+  ID3D11ShaderResourceView *scene_ssao_blur_srv;
+  ID3D11ShaderResourceView *scene_random_vec;
+  v4f ssao_offsets[R_SSAO_SampleCount];
+  
+  ID3D11RasterizerState *shadow_map_raster;
+  ID3D11SamplerState *shadow_map_sampler;
+  D3D11_VIEWPORT shadow_map_vp;
+  ID3D11DepthStencilView *shadow_map_dsv;
+  ID3D11ShaderResourceView *shadow_map_srv;
   
   R_Model cube_model;
   
@@ -219,11 +250,11 @@ function void r_submit(R_State *state);
 
 function R_Pass *r_acquire_pass(R_State *state, R_PassType type);
 
-function R_Pass *r_acquire_game_with_light_pass(R_State *state, v3f camera_p, m44 perspective, m44 world_to_camera, b32 wire_frame);
-function R_Model_Instance *r_game_with_light_add_instance(R_Pass *pass, v3f p, v3f scale, v4f colour);
-
+function R_Pass *r_acquire_game_with_light_pass(R_State *state, v3f camera_p, m44 perspective, m44 world_to_camera,
+                                                m44 light_proj, m44 world_to_light, b32 wire_frame);
+function R_Pass *r_acquire_game_shadow_pass(R_State *state, m44 projection, m44 world_to_camera);
 function R_Pass *r_acquire_game_without_light_pass(R_State *state, m44 perspective, m44 world_to_camera, b32 wire_frame);
-function R_Model_Instance *r_game_without_light_add_instance(R_Pass *pass, v3f p, v3f scale, v4f colour);
+function R_Model_Instance *r_game_add_instance(R_Pass *pass, v3f p, v3f scale, v4f colour);
 
 inline function R_Pass *r_acquire_ui_pass(R_State *state);
 inline function R_UI_Rect *r_ui_acquire_rect(R_Pass *pass);

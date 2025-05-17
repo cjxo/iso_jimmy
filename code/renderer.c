@@ -1,12 +1,20 @@
 global_variable WCHAR *global_vshader_files[] =
 {
   [R_VShaderType_Game] = L"..\\code\\shaders\\game.hlsl",
+  [R_VShaderType_GameShadows] = L"..\\code\\shaders\\game.hlsl",
+  [R_VShaderType_GameSSAO_Accum] = L"..\\code\\shaders\\forward-ssao.hlsl",
+  [R_VShaderType_GameSSAO] = L"..\\code\\shaders\\forward-ssao.hlsl",
+  [R_VShaderType_GameSSAO_Blur] = L"..\\code\\shaders\\forward-ssao-blur.hlsl",
   [R_VShaderType_UI] = L"..\\code\\shaders\\ui.hlsl",
 };
 
 global_variable char *global_vshader_entries[] =
 {
   [R_VShaderType_Game] = "vs_main",
+  [R_VShaderType_GameShadows] = "vs_shadow_only",
+  [R_VShaderType_GameSSAO_Accum] = "vs_forward_ssao_buffer_accum",
+  [R_VShaderType_GameSSAO] = "vs_forward_ssao",
+  [R_VShaderType_GameSSAO_Blur] = "vs_main",
   [R_VShaderType_UI] = "vs_main",
 };
 
@@ -14,6 +22,9 @@ global_variable WCHAR *global_pshader_files[] =
 {
   [R_PShaderType_GameWithLight] = L"..\\code\\shaders\\game.hlsl",
   [R_PShaderType_GameWithoutLight] = L"..\\code\\shaders\\game.hlsl",
+  [R_PShaderType_GameSSAO_Accum] = L"..\\code\\shaders\\forward-ssao.hlsl",
+  [R_PShaderType_GameSSAO] = L"..\\code\\shaders\\forward-ssao.hlsl",
+  [R_PShaderType_GameSSAO_Blur] = L"..\\code\\shaders\\forward-ssao-blur.hlsl",
   [R_PShaderType_UI] = L"..\\code\\shaders\\ui.hlsl",
 };
 
@@ -21,6 +32,9 @@ global_variable char *global_pshader_entries[] =
 {
   [R_PShaderType_GameWithLight] = "ps_main",
   [R_PShaderType_GameWithoutLight] = "ps_nolight",
+  [R_PShaderType_GameSSAO_Accum] = "ps_forward_ssao_buffer_accum",
+  [R_PShaderType_GameSSAO] = "ps_forward_ssao",
+  [R_PShaderType_GameSSAO_Blur] = "ps_main",
   [R_PShaderType_UI] = "ps_main",
 };
 
@@ -34,6 +48,7 @@ global_variable UINT global_cbuffer_sizes[] =
 {
   [R_CBufferType_Game_VShader0] = sizeof(DX11_VertexShader_Constants),
   [R_CBufferType_Game_PShader0] = sizeof(DX11_PixelShader_Constants),
+  [R_CBufferType_GameSSAO1] = sizeof(DX11_SSAO_Constants1),
   [R_CBufferType_UI_VShader0] = sizeof(DX11_UI_VShader_Constants),
 };
 
@@ -55,7 +70,7 @@ function void
 dx11_create_device(R_State *renderer_state)
 {
   HRESULT hr;
-  UINT device_flags = D3D11_CREATE_DEVICE_SINGLETHREADED;
+  UINT device_flags = D3D11_CREATE_DEVICE_SINGLETHREADED | D3D11_CREATE_DEVICE_BGRA_SUPPORT;
 #if defined(ISO_DEBUG)
   device_flags |= D3D11_CREATE_DEVICE_DEBUG;
 #endif
@@ -131,7 +146,7 @@ dx11_create_swap_chain(R_State *renderer_state, OS_Window window)
           .SampleDesc = { 1, 0 },
           .BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT,
           .BufferCount = 2, 
-          .Scaling = DXGI_SCALING_NONE,
+          .Scaling = DXGI_SCALING_STRETCH,
           .SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD,
           .AlphaMode = DXGI_ALPHA_MODE_UNSPECIFIED,
           .Flags = 0,
@@ -313,6 +328,38 @@ dx11_create_blend_states(R_State *state)
   {
     Assert(!"TODO: Logging");
   }
+}
+
+function void
+dx11_create_sampler_states(R_State *state)
+{
+  D3D11_SAMPLER_DESC samdesc;
+  
+  samdesc.Filter = D3D11_FILTER_MIN_MAG_MIP_POINT;
+  samdesc.AddressU = D3D11_TEXTURE_ADDRESS_CLAMP;
+  samdesc.AddressV = D3D11_TEXTURE_ADDRESS_CLAMP;
+  samdesc.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
+  samdesc.MipLODBias = 0;
+  samdesc.MaxAnisotropy = 1;
+  samdesc.ComparisonFunc = D3D11_COMPARISON_NEVER;
+  samdesc.BorderColor[0] = 0.0f;
+  samdesc.BorderColor[1] = 0.0f;
+  samdesc.BorderColor[2] = 0.0f;
+  samdesc.BorderColor[3] = 1e5f;
+  samdesc.MinLOD = 0;
+  samdesc.MaxLOD = D3D11_FLOAT32_MAX;
+  
+  samdesc.AddressU = D3D11_TEXTURE_ADDRESS_WRAP;
+  samdesc.AddressV = D3D11_TEXTURE_ADDRESS_WRAP;
+  samdesc.AddressW = D3D11_TEXTURE_ADDRESS_WRAP;
+  
+  ID3D11Device_CreateSamplerState(state->device, &samdesc, &state->point_sampler_clamp);
+  ID3D11Device_CreateSamplerState(state->device, &samdesc, &state->point_sampler_wrap);
+  
+  samdesc.AddressU = D3D11_TEXTURE_ADDRESS_BORDER;
+  samdesc.AddressV = D3D11_TEXTURE_ADDRESS_BORDER;
+  samdesc.AddressW = D3D11_TEXTURE_ADDRESS_BORDER;
+  ID3D11Device_CreateSamplerState(state->device, &samdesc, &state->point_sampler_border_black);
 }
 
 #if ISO_DEBUG
@@ -773,6 +820,333 @@ dx11_create_font_atlas(R_State *state)
 }
 
 function void
+dx11_create_shadowmap(R_State *state)
+{
+  f32 dims = 2048;
+  D3D11_VIEWPORT vp;
+  D3D11_TEXTURE2D_DESC tdesc;
+  D3D11_DEPTH_STENCIL_VIEW_DESC dsvdesc;
+  D3D11_SHADER_RESOURCE_VIEW_DESC srvdesc;
+  D3D11_SAMPLER_DESC samdesc;
+  D3D11_RASTERIZER_DESC rasterdesc;
+  ID3D11Texture2D *tex;
+  HRESULT hr;
+  
+  vp.TopLeftX = 0.0f;
+  vp.TopLeftY = 0.0f;
+  vp.Width = dims;
+  vp.Height = dims;
+  vp.MinDepth = 0.0f;
+  vp.MaxDepth = 1.0f;
+  
+  tdesc.Width = (s32)dims;
+  tdesc.Height = (s32)dims;
+  tdesc.MipLevels = 1;
+  tdesc.ArraySize = 1;
+  tdesc.Format = DXGI_FORMAT_R32_TYPELESS;
+  tdesc.SampleDesc.Count = 1;
+  tdesc.SampleDesc.Quality = 0;
+  tdesc.Usage = D3D11_USAGE_DEFAULT;
+  tdesc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_DEPTH_STENCIL;
+  tdesc.CPUAccessFlags = 0;
+  tdesc.MiscFlags = 0;
+  
+  dsvdesc.Format = DXGI_FORMAT_D32_FLOAT;
+  dsvdesc.ViewDimension = D3D11_DSV_DIMENSION_TEXTURE2D;
+  dsvdesc.Flags = 0;
+  dsvdesc.Texture2D.MipSlice = 0;
+  
+  srvdesc.Format = DXGI_FORMAT_R32_FLOAT;
+  srvdesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+  srvdesc.Texture2D.MostDetailedMip = 0;
+  srvdesc.Texture2D.MipLevels = 1;
+  
+  samdesc.Filter = D3D11_FILTER_MIN_MAG_MIP_POINT;
+  samdesc.AddressU = D3D11_TEXTURE_ADDRESS_BORDER;
+  samdesc.AddressV = D3D11_TEXTURE_ADDRESS_BORDER;
+  samdesc.AddressW = D3D11_TEXTURE_ADDRESS_BORDER;
+  samdesc.MipLODBias = 0;
+  samdesc.MaxAnisotropy = 1;
+  samdesc.ComparisonFunc = D3D11_COMPARISON_NEVER;
+  samdesc.BorderColor[0] = 1.0f;
+  samdesc.BorderColor[1] = 1.0f;
+  samdesc.BorderColor[2] = 1.0f;
+  samdesc.BorderColor[3] = 1.0f;
+  samdesc.MinLOD = 0;
+  samdesc.MaxLOD = D3D11_FLOAT32_MAX;
+  
+  hr = ID3D11Device_CreateTexture2D(state->device, &tdesc, 0, &tex);
+  if (SUCCEEDED(hr))
+  {
+    hr = ID3D11Device_CreateDepthStencilView(state->device, (ID3D11Resource *)tex,
+                                             &dsvdesc,  &state->shadow_map_dsv);
+    if (SUCCEEDED(hr))
+    {
+      hr = ID3D11Device_CreateShaderResourceView(state->device, (ID3D11Resource *)tex,
+                                                 &srvdesc, &state->shadow_map_srv);
+      if (SUCCEEDED(hr))
+      {
+        hr = ID3D11Device_CreateSamplerState(state->device, &samdesc, &state->shadow_map_sampler);
+        if (SUCCEEDED(hr))
+        {
+          rasterdesc.FillMode = D3D11_FILL_SOLID;
+          rasterdesc.CullMode = D3D11_CULL_BACK;
+          rasterdesc.FrontCounterClockwise = TRUE;
+          rasterdesc.DepthBias = 10000;
+          rasterdesc.DepthBiasClamp = 0.0f;
+          rasterdesc.SlopeScaledDepthBias = 1.0f;
+          rasterdesc.DepthClipEnable = TRUE;
+          rasterdesc.ScissorEnable = FALSE;
+          rasterdesc.MultisampleEnable = FALSE;
+          rasterdesc.AntialiasedLineEnable = FALSE;
+          hr = ID3D11Device_CreateRasterizerState(state->device, &rasterdesc, &state->shadow_map_raster);
+          if (SUCCEEDED(hr))
+          {
+          }
+          else
+          {
+            Assert(!"TODO: Logging");
+          }
+        }
+        else
+        {
+          Assert(!"TODO: Logging");
+        }
+      }
+      else
+      {
+        Assert(!"TODO: Logging");
+      }
+    }
+    else
+    {
+      Assert(!"TODO: Logging");
+    }
+    
+    ID3D11Texture2D_Release(tex);
+  }
+  else
+  {
+    Assert(!"TODO: Logging");
+  }
+  
+  state->shadow_map_vp = vp;
+}
+
+function void
+dx11_create_gbuffer(R_State *state)
+{
+  ID3D11Texture2D *tex;
+  D3D11_TEXTURE2D_DESC tex_desc;
+  D3D11_SUBRESOURCE_DATA subrec_data;
+  //D3D11_DEPTH_STENCIL_VIEW_DESC dsv_desc;
+  //D3D11_SHADER_RESOURCE_VIEW_DESC srv_desc;
+  HRESULT hr;
+  
+  tex_desc.Width = state->back_buffer_width;
+  tex_desc.Height = state->back_buffer_height;
+  tex_desc.MipLevels = 1;
+  tex_desc.ArraySize = 1;
+  tex_desc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+  tex_desc.SampleDesc.Count = 1;
+  tex_desc.SampleDesc.Quality = 0;
+  tex_desc.Usage = D3D11_USAGE_DEFAULT;
+  tex_desc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET;
+  tex_desc.CPUAccessFlags = 0;
+  tex_desc.MiscFlags = 0;
+  hr = ID3D11Device_CreateTexture2D(state->device, &tex_desc, null, &tex);
+  if (!SUCCEEDED(hr))
+  {
+    Assert(!"TODO: Logging");
+  }
+  
+  hr = ID3D11Device_CreateRenderTargetView(state->device, (ID3D11Resource *)tex,
+                                           null,
+                                           &state->scene_normals_rtv);
+  
+  if (!SUCCEEDED(hr))
+  {
+    Assert(!"TODO: Logging");
+  }
+  
+  hr = ID3D11Device_CreateShaderResourceView(state->device, (ID3D11Resource *)tex,
+                                             null,
+                                             &state->scene_normals_srv);
+  
+  if (!SUCCEEDED(hr))
+  {
+    Assert(!"TODO: Logging");
+  }
+  
+  ID3D11Texture2D_Release(tex);
+  
+#if 0
+  tex_desc.Width = state->back_buffer_width;
+  tex_desc.Height = state->back_buffer_height;
+  tex_desc.MipLevels = 1;
+  tex_desc.ArraySize = 1;
+  tex_desc.Format = DXGI_FORMAT_R32_TYPELESS;
+  tex_desc.SampleDesc.Count = 1;
+  tex_desc.SampleDesc.Quality = 0;
+  tex_desc.Usage = D3D11_USAGE_DEFAULT;
+  tex_desc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_DEPTH_STENCIL;
+  tex_desc.CPUAccessFlags = 0;
+  tex_desc.MiscFlags = 0;
+  
+  hr = ID3D11Device_CreateTexture2D(state->device, &tex_desc, null, &tex);
+  if (!SUCCEEDED(hr))
+  {
+    Assert(!"TODO: Logging");
+  }
+  
+  dsv_desc.Format = DXGI_FORMAT_D32_FLOAT;
+  dsv_desc.ViewDimension = D3D11_DSV_DIMENSION_TEXTURE2D;
+  dsv_desc.Flags = 0;
+  dsv_desc.Texture2D.MipSlice = 0;
+  hr = ID3D11Device_CreateDepthStencilView(state->device, (ID3D11Resource *)tex,
+                                           &dsv_desc, &state->scene_depth_dsv);
+  if (!SUCCEEDED(hr))
+  {
+    Assert(!"TODO: Logging");
+  }
+  
+  srv_desc.Format = DXGI_FORMAT_R32_FLOAT;
+  srv_desc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+  srv_desc.Texture2D.MostDetailedMip = 0;
+  srv_desc.Texture2D.MipLevels = 1;
+  hr = ID3D11Device_CreateShaderResourceView(state->device, (ID3D11Resource *)tex,
+                                             &srv_desc,
+                                             &state->scene_depth_srv);
+  
+  if (!SUCCEEDED(hr))
+  {
+    Assert(!"TODO: Logging");
+  }
+  
+  ID3D11Texture2D_Release(tex);
+#endif
+  
+  tex_desc.Width = state->back_buffer_width;
+  tex_desc.Height = state->back_buffer_height;
+  tex_desc.MipLevels = 1;
+  tex_desc.ArraySize = 1;
+  tex_desc.Format = DXGI_FORMAT_R32_FLOAT;
+  tex_desc.SampleDesc.Count = 1;
+  tex_desc.SampleDesc.Quality = 0;
+  tex_desc.Usage = D3D11_USAGE_DEFAULT;
+  tex_desc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET;
+  tex_desc.CPUAccessFlags = 0;
+  tex_desc.MiscFlags = 0;
+  
+  hr = ID3D11Device_CreateTexture2D(state->device, &tex_desc, null, &tex);
+  if (!SUCCEEDED(hr))
+  {
+    Assert(!"TODO: Logging");
+  }
+  
+  hr = ID3D11Device_CreateRenderTargetView(state->device, (ID3D11Resource *)tex,
+                                           null,
+                                           &state->scene_ssao_rtv);
+  
+  if (!SUCCEEDED(hr))
+  {
+    Assert(!"TODO: Logging");
+  }
+  
+  hr = ID3D11Device_CreateShaderResourceView(state->device, (ID3D11Resource *)tex,
+                                             null,
+                                             &state->scene_ssao_srv);
+  
+  if (!SUCCEEDED(hr))
+  {
+    Assert(!"TODO: Logging");
+  }
+  
+  ID3D11Texture2D_Release(tex);
+
+  hr = ID3D11Device_CreateTexture2D(state->device, &tex_desc, null, &tex);
+
+  if (!SUCCEEDED(hr))
+  {
+    Assert(!"TODO: Logging");
+  }
+
+  hr = ID3D11Device_CreateRenderTargetView(state->device, (ID3D11Resource *)tex,
+                                           null,
+                                           &state->scene_ssao_blur_rtv);
+  if (!SUCCEEDED(hr))
+  {
+    Assert(!"TODO: Logging");
+  }
+
+  hr = ID3D11Device_CreateShaderResourceView(state->device, (ID3D11Resource *)tex,
+                                             null,
+                                             &state->scene_ssao_blur_srv);
+  
+  if (!SUCCEEDED(hr))
+  {
+    Assert(!"TODO: Logging");
+  }
+  
+  ID3D11Texture2D_Release(tex);
+
+  PRNG32 rng;
+  prng32_seed(&rng, 37);
+  
+  v4f ssao_noise[16];
+  for (u32 i = 0; i < 16; ++i)
+  {
+    ssao_noise[i] = v4f_make(prng32_nextf32(&rng) * 2.0f - 1.0f,
+                             prng32_nextf32(&rng) * 2.0f - 1.0f,
+                             0.0f, 0.0f);
+  }
+  subrec_data.pSysMem = ssao_noise;
+  subrec_data.SysMemPitch = sizeof(v4f);
+  subrec_data.SysMemSlicePitch = 0;
+  
+  tex_desc.Width = 4;
+  tex_desc.Height = 4;
+  tex_desc.MipLevels = 1;
+  tex_desc.ArraySize = 1;
+  tex_desc.Format = DXGI_FORMAT_R32G32B32A32_FLOAT;
+  tex_desc.SampleDesc.Count = 1;
+  tex_desc.SampleDesc.Quality = 0;
+  tex_desc.Usage = D3D11_USAGE_IMMUTABLE;
+  tex_desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+  tex_desc.CPUAccessFlags = 0;
+  tex_desc.MiscFlags = 0;
+  
+  hr = ID3D11Device_CreateTexture2D(state->device, &tex_desc, &subrec_data, &tex);
+  if (!SUCCEEDED(hr))
+  {
+    Assert(!"TODO: Logging");
+  }
+  
+  hr = ID3D11Device_CreateShaderResourceView(state->device, (ID3D11Resource *)tex,
+                                             null,
+                                             &state->scene_random_vec);
+  
+  if (!SUCCEEDED(hr))
+  {
+    Assert(!"TODO: Logging");
+  }
+  
+  ID3D11Texture2D_Release(tex);
+  
+  v4f *offsets = state->ssao_offsets;
+  for (u64 i = 0; i < R_SSAO_SampleCount; ++i)
+  {
+    offsets[i] = v4f_make(prng32_nextf32(&rng) * 2.0f - 1.0f,
+                          prng32_nextf32(&rng) * 2.0f - 1.0f,
+                          prng32_nextf32(&rng), 0.0f);
+    f32 random_t = prng32_nextf32(&rng);
+    f32 scale = 1.0f / (f32)i;
+    scale = 0.2f + scale*scale*(0.8f);
+    offsets[i].xyz = v3f_scale(scale*random_t, v3f_normalize_or_zero(offsets[i].xyz));
+  }
+}
+
+function void
 r_init(R_State *renderer_state, OS_Window window)
 {
   renderer_state->arena = m_arena_reserve(MB(2));
@@ -781,10 +1155,14 @@ r_init(R_State *renderer_state, OS_Window window)
   dx11_create_rasterizer_states(renderer_state);
   dx11_create_depth_stencil_states(renderer_state);
   dx11_create_blend_states(renderer_state);
+  dx11_create_sampler_states(renderer_state);
   
   dx11_create_general_rendering_states(renderer_state);
   dx11_create_game_state(renderer_state);
   dx11_create_font_atlas(renderer_state);
+  
+  dx11_create_shadowmap(renderer_state);
+  dx11_create_gbuffer(renderer_state);
 }
 
 function void
@@ -800,7 +1178,6 @@ r_submit(R_State *state)
   
   f32 clear_colour[] = { 0.0f, 0.0f, 0.0f, 1.0f };
   ID3D11DeviceContext_ClearRenderTargetView(state->device_context, state->back_buffer_rtv, clear_colour);
-  ID3D11DeviceContext_ClearDepthStencilView(state->device_context, state->main_dsv, D3D11_CLEAR_DEPTH, 1.0f, 0);
   
   for (R_Pass *pass = state->first_pass;
        pass;
@@ -808,9 +1185,12 @@ r_submit(R_State *state)
   {
     switch (pass->type)
     {
-      case R_PassType_GameRenderWithLight:
+      case R_PassType_Game_WithLight:
       {
-        R_Pass_GameWithLight *gwl = &pass->withlight;
+        R_Pass_Game *gwl = &pass->game;
+        ID3D11DeviceContext_ClearRenderTargetView(state->device_context, state->scene_ssao_rtv, clear_colour);
+        ID3D11DeviceContext_ClearRenderTargetView(state->device_context, state->scene_normals_rtv, clear_colour);
+        ID3D11DeviceContext_ClearDepthStencilView(state->device_context, state->main_dsv, D3D11_CLEAR_DEPTH, 1.0f, 0);
         
         D3D11_MAPPED_SUBRESOURCE mapped_subrec;
         ID3D11DeviceContext_Map(state->device_context, (ID3D11Resource *)state->sbuffers[R_SBufferType_Game], 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped_subrec);
@@ -820,7 +1200,8 @@ r_submit(R_State *state)
         {
           DX11_VertexShader_Constants init_cbuffer =
           {
-            gwl->perspective, gwl->world_to_camera,
+            gwl->projection, gwl->world_to_camera,
+            gwl->light_proj, gwl->world_to_light
           };
           
           ID3D11DeviceContext_Map(state->device_context, (ID3D11Resource *)state->cbuffers[R_CBufferType_Game_VShader0], 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped_subrec);
@@ -832,10 +1213,10 @@ r_submit(R_State *state)
           DX11_PixelShader_Constants init_cbuffer =
           {
             .eye_p_in_world = gwl->camera_p,
-            .lights_count = (u32)gwl->lights_count,
+            .light = gwl->light,
           };
           
-          CopyMemory(init_cbuffer.lights, gwl->lights, sizeof(gwl->lights));
+          //CopyMemory(init_cbuffer.lights, gwl->lights, sizeof(gwl->lights));
           
           ID3D11DeviceContext_Map(state->device_context, (ID3D11Resource *)state->cbuffers[R_CBufferType_Game_PShader0], 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped_subrec);
           CopyMemory(mapped_subrec.pData, &init_cbuffer, mapped_subrec.RowPitch);
@@ -848,7 +1229,6 @@ r_submit(R_State *state)
         ID3D11DeviceContext_IASetIndexBuffer(state->device_context, state->cube_model.indices, DXGI_FORMAT_R32_UINT, 0);
         ID3D11DeviceContext_IASetInputLayout(state->device_context, state->input_layouts[R_InputLayoutType_Game]);
         
-        ID3D11DeviceContext_VSSetShader(state->device_context, state->vshaders[R_VShaderType_Game], null, 0);
         ID3D11DeviceContext_VSSetConstantBuffers(state->device_context, 0, 1, &state->cbuffers[R_CBufferType_Game_VShader0]);
         ID3D11DeviceContext_VSSetShaderResources(state->device_context, 0, 1, &state->sbuffer_srvs[R_SBufferType_Game]);
         
@@ -862,12 +1242,148 @@ r_submit(R_State *state)
         }
         ID3D11DeviceContext_RSSetViewports(state->device_context, 1, &viewport);
         
+        ID3D11DeviceContext_OMSetDepthStencilState(state->device_context, state->ds_depth_only, 0);
+        
+        //
+        // Accumulate Buffers for SSAO
+        //
+        ID3D11DeviceContext_VSSetShader(state->device_context, state->vshaders[R_VShaderType_GameSSAO_Accum], null, 0);
+        ID3D11DeviceContext_PSSetShader(state->device_context, state->pshaders[R_PShaderType_GameSSAO_Accum], null, 0);
+        ID3D11DeviceContext_OMSetRenderTargets(state->device_context, 1, &state->scene_normals_rtv, state->main_dsv);
+        if (gwl->instances_count)
+        {
+          ID3D11DeviceContext_DrawIndexedInstanced(state->device_context,
+                                                   state->cube_model.indices_count,
+                                                   (UINT)gwl->instances_count,
+                                                   0, 0, 0);
+        }
+        
+        //
+        // Create SSAO texture
+        //
+        f32 aspect = 720.0f / 1280.0f;
+        f32 far_z = 100.0f;
+        f32 fov_rad = DegToRad(66.2f);
+        
+        f32 right = far_z * tanf(fov_rad * 0.5f);
+        f32 left = -right;
+        f32 top = right * aspect;
+        f32 bottom = -top;
+        
+        {
+          DX11_SSAO_Constants1 constants;
+          v4f *far_plane_ptr = constants.far_plane_ptr;
+          far_plane_ptr[0] = v4f_make(left, top, far_z, 0.0f);
+          far_plane_ptr[1] = v4f_make(left, bottom, far_z, 0.0f);
+          far_plane_ptr[2] = v4f_make(right, top, far_z, 0.0f);
+          far_plane_ptr[3] = v4f_make(right, bottom, far_z, 0.0f);
+          CopyMemory(constants.samples_for_ssao, state->ssao_offsets, sizeof(state->ssao_offsets));
+          
+          ID3D11DeviceContext_Map(state->device_context, (ID3D11Resource *)state->cbuffers[R_CBufferType_GameSSAO1], 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped_subrec);
+          CopyMemory(mapped_subrec.pData, &constants, mapped_subrec.RowPitch);
+          ID3D11DeviceContext_Unmap(state->device_context, (ID3D11Resource *)state->cbuffers[R_CBufferType_GameSSAO1], 0);
+        }
+        
+        ID3D11DeviceContext_OMSetRenderTargets(state->device_context, 1, &state->scene_ssao_rtv, null);
+        ID3D11DeviceContext_IASetPrimitiveTopology(state->device_context, D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
+        ID3D11DeviceContext_VSSetShader(state->device_context, state->vshaders[R_VShaderType_GameSSAO], null, 0);
+        ID3D11DeviceContext_VSSetConstantBuffers(state->device_context, 1, 1, &state->cbuffers[R_CBufferType_GameSSAO1]);
+        ID3D11DeviceContext_RSSetState(state->device_context, state->raster_fill_nocull_ccw);
+        ID3D11DeviceContext_PSSetShader(state->device_context, state->pshaders[R_PShaderType_GameSSAO], null, 0);
+        ID3D11DeviceContext_PSSetSamplers(state->device_context, 0, 1, &state->point_sampler_border_black);
+        ID3D11DeviceContext_PSSetSamplers(state->device_context, 1, 1, &state->point_sampler_wrap);
+        ID3D11DeviceContext_PSSetConstantBuffers(state->device_context, 0, 1, &state->cbuffers[R_CBufferType_Game_VShader0]);
+        ID3D11DeviceContext_PSSetConstantBuffers(state->device_context, 1, 1, &state->cbuffers[R_CBufferType_GameSSAO1]);
+        ID3D11DeviceContext_PSSetShaderResources(state->device_context, 1, 1, &state->scene_normals_srv);
+        ID3D11DeviceContext_PSSetShaderResources(state->device_context, 2, 1, &state->scene_random_vec);
+        ID3D11DeviceContext_Draw(state->device_context, 4, 0);
+
+        // Blur the SSAO map
+
+        ID3D11DeviceContext_OMSetRenderTargets(state->device_context, 1, &state->scene_ssao_blur_rtv, null);
+        ID3D11DeviceContext_VSSetShader(state->device_context, state->vshaders[R_VShaderType_GameSSAO_Blur], null, 0);
+        ID3D11DeviceContext_PSSetShader(state->device_context, state->pshaders[R_PShaderType_GameSSAO_Blur], null, 0);
+        ID3D11DeviceContext_PSSetSamplers(state->device_context, 0, 1, &state->point_sampler_wrap);
+        ID3D11DeviceContext_PSSetShaderResources(state->device_context, 0, 1, &state->scene_ssao_srv);
+        ID3D11DeviceContext_Draw(state->device_context, 4, 0);
+
+#if 1
+        //
+        // render the game
+        //
+        ID3D11DeviceContext_ClearDepthStencilView(state->device_context, state->main_dsv, D3D11_CLEAR_DEPTH, 1.0f, 0);
+        ID3D11DeviceContext_OMSetRenderTargets(state->device_context, 1, &state->back_buffer_rtv, state->main_dsv);
+        ID3D11DeviceContext_IASetPrimitiveTopology(state->device_context, D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+        ID3D11DeviceContext_ClearDepthStencilView(state->device_context, state->main_dsv, D3D11_CLEAR_DEPTH, 1.0f, 0);
+        ID3D11DeviceContext_VSSetShader(state->device_context, state->vshaders[R_VShaderType_Game], null, 0);
         ID3D11DeviceContext_PSSetShader(state->device_context, state->pshaders[R_PShaderType_GameWithLight], null, 0);
         ID3D11DeviceContext_PSSetConstantBuffers(state->device_context, 1, 1, &state->cbuffers[R_CBufferType_Game_PShader0]);
+        ID3D11DeviceContext_PSSetSamplers(state->device_context, 0, 1, &state->shadow_map_sampler);
+        ID3D11DeviceContext_PSSetSamplers(state->device_context, 1, 1, &state->point_sampler_clamp);
+        ID3D11DeviceContext_PSSetShaderResources(state->device_context, 1, 1, &state->shadow_map_srv);
+        ID3D11DeviceContext_PSSetShaderResources(state->device_context, 2, 1, &state->scene_ssao_blur_srv);
+        
+        if (gwl->wire_frame)
+        {
+          ID3D11DeviceContext_RSSetState(state->device_context, state->raster_wire_cull_ccw);
+        }
+        else
+        {
+          ID3D11DeviceContext_RSSetState(state->device_context, state->raster_fill_cull_ccw);
+        }
+        
+        ID3D11DeviceContext_OMSetBlendState(state->device_context, (ID3D11BlendState *)state->blend_state_transparency, null, 0xffffffff);
+        
+        // NOTE(cj): Cube instance
+        if (gwl->instances_count)
+        {
+          ID3D11DeviceContext_DrawIndexedInstanced(state->device_context,
+                                                   state->cube_model.indices_count,
+                                                   (UINT)gwl->instances_count,
+                                                   0, 0, 0);
+        }
+#endif
+      } break;
+      
+      case R_PassType_Game_Shadow:
+      {
+        R_Pass_Game *gwl = &pass->game;
+        
+        ID3D11DeviceContext_ClearDepthStencilView(state->device_context, state->shadow_map_dsv, D3D11_CLEAR_DEPTH, 1.0f, 0);
+        
+        D3D11_MAPPED_SUBRESOURCE mapped_subrec;
+        ID3D11DeviceContext_Map(state->device_context, (ID3D11Resource *)state->sbuffers[R_SBufferType_Game], 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped_subrec);
+        CopyMemory(mapped_subrec.pData, gwl->instances, mapped_subrec.RowPitch);
+        ID3D11DeviceContext_Unmap(state->device_context, (ID3D11Resource *)state->sbuffers[R_SBufferType_Game], 0);
+        
+        {
+          DX11_VertexShader_Constants init_cbuffer =
+          {
+            gwl->light_proj, gwl->world_to_light,
+          };
+          
+          ID3D11DeviceContext_Map(state->device_context, (ID3D11Resource *)state->cbuffers[R_CBufferType_Game_VShader0], 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped_subrec);
+          CopyMemory(mapped_subrec.pData, &init_cbuffer, mapped_subrec.RowPitch);
+          ID3D11DeviceContext_Unmap(state->device_context, (ID3D11Resource *)state->cbuffers[R_CBufferType_Game_VShader0], 0);
+        }
+        
+        ID3D11DeviceContext_IASetPrimitiveTopology(state->device_context, D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+        UINT offset = 0;
+        ID3D11DeviceContext_IASetVertexBuffers(state->device_context, 0, 1, &state->cube_model.vertices, &state->cube_model.struct_size, &offset);
+        ID3D11DeviceContext_IASetIndexBuffer(state->device_context, state->cube_model.indices, DXGI_FORMAT_R32_UINT, 0);
+        ID3D11DeviceContext_IASetInputLayout(state->device_context, state->input_layouts[R_InputLayoutType_Game]);
+        
+        ID3D11DeviceContext_VSSetShader(state->device_context, state->vshaders[R_VShaderType_GameShadows], null, 0);
+        ID3D11DeviceContext_VSSetConstantBuffers(state->device_context, 0, 1, &state->cbuffers[R_CBufferType_Game_VShader0]);
+        ID3D11DeviceContext_VSSetShaderResources(state->device_context, 0, 1, &state->sbuffer_srvs[R_SBufferType_Game]);
+        
+        ID3D11DeviceContext_PSSetShader(state->device_context, null, null, 0);
+        
+        ID3D11DeviceContext_RSSetViewports(state->device_context, 1, &state->shadow_map_vp);
+        ID3D11DeviceContext_RSSetState(state->device_context, state->shadow_map_raster);
         
         ID3D11DeviceContext_OMSetDepthStencilState(state->device_context, state->ds_depth_only, 0);
-        ID3D11DeviceContext_OMSetRenderTargets(state->device_context, 1, &state->back_buffer_rtv, state->main_dsv);
-        ID3D11DeviceContext_OMSetBlendState(state->device_context, (ID3D11BlendState *)state->blend_state_transparency, null, 0xffffffff);
+        ID3D11DeviceContext_OMSetRenderTargets(state->device_context, 0, null, state->shadow_map_dsv);
         
         // NOTE(cj): Cube instance
         if (gwl->instances_count)
@@ -879,9 +1395,9 @@ r_submit(R_State *state)
         }
       } break;
       
-      case R_PassType_GameRenderWithoutLight:
+      case R_PassType_Game_WithoutLight:
       {
-        R_Pass_GameWithoutLight *gwl = &pass->withoutlight;
+        R_Pass_Game *gwl = &pass->game;
         
         D3D11_MAPPED_SUBRESOURCE mapped_subrec;
         ID3D11DeviceContext_Map(state->device_context, (ID3D11Resource *)state->sbuffers[R_SBufferType_Game], 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped_subrec);
@@ -891,7 +1407,7 @@ r_submit(R_State *state)
         {
           DX11_VertexShader_Constants init_cbuffer =
           {
-            gwl->perspective, gwl->world_to_camera,
+            gwl->projection, gwl->world_to_camera,
           };
           
           ID3D11DeviceContext_Map(state->device_context, (ID3D11Resource *)state->cbuffers[R_CBufferType_Game_VShader0], 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped_subrec);
@@ -1002,49 +1518,38 @@ r_acquire_pass(R_State *state, R_PassType type)
 }
 
 function R_Pass *
-r_acquire_game_with_light_pass(R_State *state, v3f camera_p, m44 perspective, m44 world_to_camera, b32 wire_frame)
+r_acquire_game_with_light_pass(R_State *state, v3f camera_p, m44 perspective, m44 world_to_camera,
+                               m44 light_proj, m44 world_to_light, b32 wire_frame)
 {
-  R_Pass *result = r_acquire_pass(state, R_PassType_GameRenderWithLight);
-  result->withlight.camera_p = camera_p;
-  result->withlight.perspective = perspective;
-  result->withlight.world_to_camera = world_to_camera;
-  result->withlight.wire_frame = wire_frame;
+  R_Pass *result = r_acquire_pass(state, R_PassType_Game_WithLight);
+  result->game.camera_p = camera_p;
+  result->game.projection = perspective;
+  result->game.world_to_camera = world_to_camera;
+  result->game.wire_frame = wire_frame;
+  result->game.light_proj = light_proj;
+  result->game.world_to_light = world_to_light;
   return(result);
 }
 
 function R_Pass *
 r_acquire_game_without_light_pass(R_State *state, m44 perspective, m44 world_to_camera, b32 wire_frame)
 {
-  R_Pass *result = r_acquire_pass(state, R_PassType_GameRenderWithoutLight);
-  result->withoutlight.perspective = perspective;
-  result->withoutlight.world_to_camera = world_to_camera;
-  result->withoutlight.wire_frame = wire_frame;
-  return(result);
-}
-
-function R_Model_Instance *
-r_game_with_light_add_instance(R_Pass *pass, v3f p, v3f scale, v4f colour)
-{
-  Assert(pass->type == R_PassType_GameRenderWithLight);
-  
-  R_Pass_GameWithLight *gwl = &(pass->withlight);
-  Assert(gwl->instances_count < ArrayCount(gwl->instances));
-  
-  R_Model_Instance *result = gwl->instances + gwl->instances_count++;
-  result->p = p;
-  result->scale = scale;
-  result->colour = colour;
+  R_Pass *result = r_acquire_pass(state, R_PassType_Game_WithoutLight);
+  result->game.projection = perspective;
+  result->game.world_to_camera = world_to_camera;
+  result->game.wire_frame = wire_frame;
   return(result);
 }
 
 function R_Light *
-r_game_with_light_add_point_light(R_Pass *pass, v3f p, v4f colour)
+r_game_add_point_light(R_Pass *pass, v3f p, v4f colour)
 {
-  Assert(pass->type == R_PassType_GameRenderWithLight);
-  R_Pass_GameWithLight *gwl = &(pass->withlight);
-  Assert(gwl->lights_count < R_LightCount_Max);
+  Assert((pass->type == R_PassType_Game_WithLight) ||
+         (pass->type == R_PassType_Game_Shadow));
   
-  R_Light *result = gwl->lights + gwl->lights_count++;
+  R_Pass_Game *g = &(pass->game);
+  
+  R_Light *result = &g->light;
   result->p = p;
   result->type = R_LightType_PointLight;
   result->colour = colour;
@@ -1052,28 +1557,41 @@ r_game_with_light_add_point_light(R_Pass *pass, v3f p, v4f colour)
 }
 
 function R_Light *
-r_game_with_light_add_directional_light(R_Pass *pass, v3f dir, v4f colour)
+r_game_add_directional_light(R_Pass *pass, v3f p, v3f dir, v4f colour)
 {
-  Assert(pass->type == R_PassType_GameRenderWithLight);
-  R_Pass_GameWithLight *gwl = &(pass->withlight);
-  Assert(gwl->lights_count < R_LightCount_Max);
+  Assert((pass->type == R_PassType_Game_WithLight) ||
+         (pass->type == R_PassType_Game_Shadow));
   
-  R_Light *result = gwl->lights + gwl->lights_count++;
+  R_Pass_Game *g = &(pass->game);
+  
+  R_Light *result = &g->light;
   result->dir = dir;
   result->type = R_LightType_DirectionalLight;
   result->colour = colour;
+  result->p = p;
+  return(result);
+}
+
+function R_Pass *
+r_acquire_game_shadow_pass(R_State *state, m44 projection, m44 world_to_light)
+{
+  R_Pass *result = r_acquire_pass(state, R_PassType_Game_Shadow);
+  result->game.light_proj = projection;
+  result->game.world_to_light = world_to_light;
   return(result);
 }
 
 function R_Model_Instance *
-r_game_without_light_add_instance(R_Pass *pass, v3f p, v3f scale, v4f colour)
+r_game_add_instance(R_Pass *pass, v3f p, v3f scale, v4f colour)
 {
-  Assert(pass->type == R_PassType_GameRenderWithoutLight);
+  Assert((pass->type == R_PassType_Game_WithLight) ||
+         (pass->type == R_PassType_Game_Shadow) ||
+         (pass->type == R_PassType_Game_WithoutLight));
   
-  R_Pass_GameWithoutLight *gwl = &(pass->withoutlight);
-  Assert(gwl->instances_count < ArrayCount(gwl->instances));
+  R_Pass_Game *g = &(pass->game);
+  Assert(g->instances_count < ArrayCount(g->instances));
   
-  R_Model_Instance *result = gwl->instances + gwl->instances_count++;
+  R_Model_Instance *result = g->instances + g->instances_count++;
   result->p = p;
   result->scale = scale;
   result->colour = colour;

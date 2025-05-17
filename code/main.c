@@ -165,7 +165,7 @@ g_cam_init(G_Camera *camera, v3f init_p, f32 camera_aspect)
 {
   camera->look_to = init_p;
   camera->near_z = 1.0f;
-  camera->far_z = 50.0f;
+  camera->far_z = 100.0f;
   camera->fov_rad = DegToRad(66.2f);
   camera->lock_strength = 0.03f;
   camera->aspect = camera_aspect;
@@ -185,7 +185,7 @@ g_init(G_State *state, M_Arena *arena, f32 camera_aspect)
   u64 block_volume = G_ChunkDims_Z * G_ChunkDims_Y * G_ChunkDims_X;
   state->blocks = M_Arena_PushArray(arena, G_Block, block_volume);
   
-  noise2d_create(&state->noise2d, 64);
+  noise2d_create(&state->noise2d, 334);
   f32 max_noise = 0.0f;
   for (u32 y = 0; y < G_ChunkDims_Z; ++y)
   {
@@ -393,6 +393,122 @@ g_update_camera(G_Camera *cam, OS_Window window, OS_Input *input, v3f look_to_up
   }
 }
 
+function void
+game_draw(G_State *game, R_Pass *pass)
+{
+  {
+    G_Camera cam = game->camera;
+    for (u64 block_z = 0; block_z < G_ChunkDims_Z; ++block_z)
+    {
+      for (u64 block_y = 0; block_y < G_ChunkDims_Y; ++block_y)
+      {
+        for (u64 block_x = 0; block_x < G_ChunkDims_X; ++block_x)
+        {
+          // TODO: AABB PLANE INTERSECT.
+          v3f p3 = v3f_make((f32)block_x, (f32)block_y, (f32)block_z);
+          f32 signed_dist_near = (v3f_dot(cam.near_plane.n, p3) - cam.near_plane.d);
+          f32 signed_dist_far = (v3f_dot(cam.far_plane.n, p3) - cam.far_plane.d);
+          f32 signed_dist_right = (v3f_dot(cam.right_plane.n, p3) - cam.right_plane.d);
+          f32 signed_dist_left = (v3f_dot(cam.left_plane.n, p3) - cam.left_plane.d);
+          f32 signed_dist_top = (v3f_dot(cam.top_plane.n, p3) - cam.top_plane.d);
+          f32 signed_dist_bottom = (v3f_dot(cam.bottom_plane.n, p3) - cam.bottom_plane.d);
+          
+          f32 radius = -0.75f;
+          b32 inside_camera_volume = ((signed_dist_near > radius) &&
+                                      (signed_dist_far > radius) && 
+                                      (signed_dist_right > radius) &&
+                                      (signed_dist_left > radius)&&
+                                      (signed_dist_top > radius) &&
+                                      (signed_dist_bottom > radius)
+                                      );
+          
+          G_Block *block = game->blocks + G_ChunkIndex(block_x, block_y, block_z);
+          if ((block->flags & G_BlockFlag_Active) && inside_camera_volume)
+          {
+            b32 left_block_active = false;
+            b32 right_block_active = false;
+            b32 top_block_active = false;
+            b32 bottom_block_active = false;
+            b32 back_block_active = false;
+            b32 front_block_active = false;
+            G_Block *test_block;
+            
+            if (block_x > 0)
+            {
+              test_block = game->blocks + G_ChunkIndex(block_x - 1, block_y, block_z);
+              left_block_active = !!(test_block->flags&G_BlockFlag_Active);
+            }
+            
+            if ((block_x + 1) < G_ChunkDims_X)
+            {
+              test_block = game->blocks + G_ChunkIndex(block_x + 1, block_y, block_z);
+              right_block_active = !!(test_block->flags&G_BlockFlag_Active);
+            }
+            
+            if (block_y > 0)
+            {
+              test_block = game->blocks + G_ChunkIndex(block_x, block_y - 1, block_z);
+              bottom_block_active = !!(test_block->flags&G_BlockFlag_Active);
+            }
+            
+            if ((block_y + 1) < G_ChunkDims_Y)
+            {
+              test_block = game->blocks + G_ChunkIndex(block_x, block_y + 1, block_z);
+              top_block_active = !!(test_block->flags&G_BlockFlag_Active);
+            }
+            
+            if (block_z > 0)
+            {
+              test_block = game->blocks + G_ChunkIndex(block_x, block_y, block_z - 1);
+              back_block_active = !!(test_block->flags&G_BlockFlag_Active);
+            }
+            
+            if ((block_z + 1) < G_ChunkDims_Z)
+            {
+              test_block = game->blocks + G_ChunkIndex(block_x, block_y, block_z + 1);
+              front_block_active = !!(test_block->flags&G_BlockFlag_Active);
+            }
+            
+            // if there exist at least one neighboring block that isnt active,
+            // then render this block. 
+            // We need to do this soon in a granular level, such as plane mesh instead of cube mesh.
+            if (!(left_block_active && right_block_active &&
+                  top_block_active && bottom_block_active &&
+                  back_block_active && front_block_active))
+            {
+              switch (block->type)
+              {
+                case G_BlockType_Grass:
+                {
+                  r_game_add_instance(pass,
+                                      p3,
+                                      v3f_make(1.0f, 1.0f, 1.0f),
+                                      RGBA(97, 154, 86, 1.0f));
+                } break;
+                
+                case G_BlockType_Dirt:
+                {
+                  r_game_add_instance(pass,
+                                      p3,
+                                      v3f_make(1.0f, 1.0f, 1.0f),
+                                      RGBA(156, 122, 82, 1.0f));
+                } break;
+                
+                InvalidDefaultCase;
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  
+  r_game_add_instance(pass,
+                      game->player_p,
+                      v3f_make(1.0f, 1.0f, 1.0f),
+                      RGBA(94.0f, 68.0f, 121.0f, 1.0f));
+}
+
 int __stdcall
 WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PSTR lpCmd, int nShowCmd)
 {
@@ -484,6 +600,30 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PSTR lpCmd, int nShowCmd)
     
     g_update_camera(&game_state.camera, window, input, game_state.player_p, seconds_per_frame);
     
+    //v3f light_p = v3f_make(game_state.player_p.x, game_state.player_p.y + 20, game_state.player_p.z - 20);
+    v3f light_p = v3f_make(20, G_ChunkDims_Y + 20, -20);
+    v3f light_dir = v3f_make(0.0f, -1.0f, 1.0f);
+    v4f light_intensity = v4f_make(0.7f, 0.7f, 0.7f, 1.0f);
+    
+    f32 scaling = v3f_dot(v3f_make(0, 1, 0), light_dir) / v3f_dot(light_dir, light_dir);
+    v3f up = v3f_sub(v3f_make(0, 1, 0), v3f_scale(scaling, light_dir));
+    v3f right = v3f_normalize_or_zero(v3f_cross(up, light_dir));
+    up = v3f_normalize_or_zero(up);
+    light_dir = v3f_normalize_or_zero(light_dir);
+    
+    R_Pass *shadow_pass = r_acquire_game_shadow_pass(&renderer_state,
+                                                     m44_make_orthographic_z01(-50, 50, -50, 50, 0.0f, 500.0f),
+                                                     (m44)
+                                                     {
+                                                       right.x, right.y, right.z, -v3f_dot(light_p, right),
+                                                       up.x, up.y, up.z, -v3f_dot(light_p, up),
+                                                       light_dir.x, light_dir.y, light_dir.z, -v3f_dot(light_p, light_dir),
+                                                       0.0f, 0.0f, 0.0f, 1.0f,
+                                                     });
+    
+    r_game_add_directional_light(shadow_pass, light_p, light_dir, light_intensity);
+    game_draw(&game_state, shadow_pass);
+    
     R_Pass *light_pass = r_acquire_game_with_light_pass(&renderer_state, 
                                                         game_state.camera.look_from,
                                                         m44_perspective_dx11(game_state.camera.aspect, game_state.camera.fov_rad,
@@ -495,122 +635,17 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PSTR lpCmd, int nShowCmd)
                                                           game_state.camera.z.x, game_state.camera.z.y, game_state.camera.z.z, -v3f_dot(game_state.camera.look_from, game_state.camera.z),
                                                           0.0f, 0.0f, 0.0f, 1.0f,
                                                         },
+                                                        m44_make_orthographic_z01(-50, 50, -50, 50, 0.0f, 500.0f),
+                                                        (m44)
+                                                        {
+                                                          right.x, right.y, right.z, -v3f_dot(light_p, right),
+                                                          up.x, up.y, up.z, -v3f_dot(light_p, up),
+                                                          light_dir.x, light_dir.y, light_dir.z, -v3f_dot(light_p, light_dir),
+                                                          0.0f, 0.0f, 0.0f, 1.0f,
+                                                        },
                                                         game_state.debug_wire_frame);
-    
-    //R_Light *point_light = r_game_with_light_add_point_light(light_pass, v3f_make(game_state.player_p.x, game_state.player_p.y + 2, game_state.player_p.z), v4f_make(1,1,1,1));
-    r_game_with_light_add_directional_light(light_pass, v3f_make(0.0f, -1.0f, 1.0f), v4f_make(0.7f, 0.7f, 0.7f, 1.0f));
-    {
-      G_Camera cam = game_state.camera;
-      for (u64 block_z = 0; block_z < G_ChunkDims_Z; ++block_z)
-      {
-        for (u64 block_y = 0; block_y < G_ChunkDims_Y; ++block_y)
-        {
-          for (u64 block_x = 0; block_x < G_ChunkDims_X; ++block_x)
-          {
-            // TODO: AABB PLANE INTERSECT.
-            v3f p3 = v3f_make((f32)block_x, (f32)block_y, (f32)block_z);
-            f32 signed_dist_near = (v3f_dot(cam.near_plane.n, p3) - cam.near_plane.d);
-            f32 signed_dist_far = (v3f_dot(cam.far_plane.n, p3) - cam.far_plane.d);
-            f32 signed_dist_right = (v3f_dot(cam.right_plane.n, p3) - cam.right_plane.d);
-            f32 signed_dist_left = (v3f_dot(cam.left_plane.n, p3) - cam.left_plane.d);
-            f32 signed_dist_top = (v3f_dot(cam.top_plane.n, p3) - cam.top_plane.d);
-            f32 signed_dist_bottom = (v3f_dot(cam.bottom_plane.n, p3) - cam.bottom_plane.d);
-            
-            f32 radius = -1;
-            b32 inside_camera_volume = ((signed_dist_near > radius) &&
-                                        (signed_dist_far > radius) && 
-                                        (signed_dist_right > radius) &&
-                                        (signed_dist_left > radius)&&
-                                        (signed_dist_top > radius) &&
-                                        (signed_dist_bottom > radius)
-                                        );
-            
-            G_Block *block = game_state.blocks + G_ChunkIndex(block_x, block_y, block_z);
-            if ((block->flags & G_BlockFlag_Active) && inside_camera_volume)
-            {
-              b32 left_block_active = false;
-              b32 right_block_active = false;
-              b32 top_block_active = false;
-              b32 bottom_block_active = false;
-              b32 back_block_active = false;
-              b32 front_block_active = false;
-              G_Block *test_block;
-              
-              if (block_x > 0)
-              {
-                test_block = game_state.blocks + G_ChunkIndex(block_x - 1, block_y, block_z);
-                left_block_active = !!(test_block->flags&G_BlockFlag_Active);
-              }
-              
-              if ((block_x + 1) < G_ChunkDims_X)
-              {
-                test_block = game_state.blocks + G_ChunkIndex(block_x + 1, block_y, block_z);
-                right_block_active = !!(test_block->flags&G_BlockFlag_Active);
-              }
-              
-              if (block_y > 0)
-              {
-                test_block = game_state.blocks + G_ChunkIndex(block_x, block_y - 1, block_z);
-                bottom_block_active = !!(test_block->flags&G_BlockFlag_Active);
-              }
-              
-              if ((block_y + 1) < G_ChunkDims_Y)
-              {
-                test_block = game_state.blocks + G_ChunkIndex(block_x, block_y + 1, block_z);
-                top_block_active = !!(test_block->flags&G_BlockFlag_Active);
-              }
-              
-              if (block_z > 0)
-              {
-                test_block = game_state.blocks + G_ChunkIndex(block_x, block_y, block_z - 1);
-                back_block_active = !!(test_block->flags&G_BlockFlag_Active);
-              }
-              
-              if ((block_z + 1) < G_ChunkDims_Z)
-              {
-                test_block = game_state.blocks + G_ChunkIndex(block_x, block_y, block_z + 1);
-                front_block_active = !!(test_block->flags&G_BlockFlag_Active);
-              }
-              
-              // if there exist at least one neighboring block that isnt active,
-              // then render this block. 
-              // We need to do this soon in a granular level, such as plane mesh instead of cube mesh.
-              if (!(left_block_active && right_block_active &&
-                    top_block_active && bottom_block_active &&
-                    back_block_active && front_block_active))
-              {
-                switch (block->type)
-                {
-                  case G_BlockType_Grass:
-                  {
-                    r_game_with_light_add_instance(light_pass,
-                                                   p3,
-                                                   v3f_make(1.0f, 1.0f, 1.0f),
-                                                   RGBA(97, 154, 86, 1.0f));
-                  } break;
-                  
-                  case G_BlockType_Dirt:
-                  {
-                    r_game_with_light_add_instance(light_pass,
-                                                   p3,
-                                                   v3f_make(1.0f, 1.0f, 1.0f),
-                                                   RGBA(156, 122, 82, 1.0f));
-                  } break;
-                  
-                  InvalidDefaultCase;
-                }
-              }
-            }
-          }
-        }
-      }
-    }
-    
-    r_game_with_light_add_instance(light_pass,
-                                   game_state.player_p,
-                                   v3f_make(1.0f, 1.0f, 1.0f),
-                                   RGBA(94.0f, 68.0f, 121.0f, 1.0f));
-    
+    r_game_add_directional_light(light_pass, light_p, light_dir, light_intensity);
+    game_draw(&game_state, light_pass);
     
 #if 0
     R_Pass *no_light_pass = r_acquire_game_without_light_pass(&renderer_state, 
@@ -649,7 +684,7 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PSTR lpCmd, int nShowCmd)
     
     r_ui_textf(ui_pass, v2f_make(0, 28*3), v4f_make(1,1,1,1),
                str8("Active Blocks: %llu"), 
-               light_pass->withlight.instances_count);
+               light_pass->game.instances_count);
     
     {
       String_U8_Const str = str8("Camera Roam (O): %s");
