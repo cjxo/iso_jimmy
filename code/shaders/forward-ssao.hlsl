@@ -107,7 +107,7 @@ SamplerState g_point_sampler_random_vec : register(s1);
 
 float ps_forward_ssao(VS_Output_SSAO ps_inp) : SV_Target0
 {
-	uint g_sample_count = 64;
+	uint g_sample_count = 16;
 	float g_occlusion_radius = 0.5f;
 	float g_occlusion_fade_start = 0.2f;
 	float g_occlusion_fade_end = 2.0f;
@@ -166,5 +166,5 @@ float ps_forward_ssao(VS_Output_SSAO ps_inp) : SV_Target0
 
 	float result =  1.0f - (occlusion_sum / (float)g_sample_count);
 	//return result;
-	return saturate(pow(result, 2.0f));
+	return saturate(pow(result, 4.0f));
 }

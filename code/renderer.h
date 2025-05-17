@@ -64,9 +64,9 @@ typedef struct
 typedef u64 R_PassType;
 enum
 {
-  R_PassType_Game_WithLight,
+  R_PassType_Game,
   R_PassType_Game_Shadow,
-  R_PassType_Game_WithoutLight,
+  R_PassType_Game_SSAO,
   R_PassType_UI,
   R_PassType_Count,
 };
@@ -75,17 +75,19 @@ enum
 
 typedef struct
 {
-  R_Model_Instance instances[R_MaxModelInstances];
-  u64 instances_count;
-  
-  v3f camera_p;
+  b32 is_ortho;
+  v3f p;
+  f32 z_near, z_far;
+  f32 aspect_height_over_width;
+  f32 left, right, bottom, top;
+  f32 fov_rad;
+  v3f world_vect_x, world_vect_y, world_vect_z;
+} R_CameraConfig;
+
+typedef struct
+{  
   R_Light light;
-  m44 projection;
-  m44 world_to_camera;
-  
-  m44 light_proj;
-  m44 world_to_light;
-  
+  R_CameraConfig world_camera, light_camera;
   b32 wire_frame;
 } R_Pass_Game;
 
@@ -140,7 +142,7 @@ typedef struct
   m44 proj;
 } DX11_UI_VShader_Constants;
 
-#define R_SSAO_SampleCount 64
+#define R_SSAO_SampleCount 16
 __declspec(align(16)) typedef struct
 {
   v4f far_plane_ptr[4], samples_for_ssao[R_SSAO_SampleCount];
@@ -159,8 +161,7 @@ typedef enum
 
 typedef enum
 {
-  R_PShaderType_GameWithLight,
-  R_PShaderType_GameWithoutLight,
+  R_PShaderType_Game,
   R_PShaderType_GameSSAO_Accum,
   R_PShaderType_GameSSAO,
   R_PShaderType_GameSSAO_Blur,
@@ -242,6 +243,8 @@ typedef struct
   HFONT font_handle;
   R_Font font;
   
+  R_Model_Instance instances[R_MaxModelInstances];
+  u64 instances_count;
   R_Pass *first_pass, *last_pass;
 } R_State;
 
@@ -250,11 +253,11 @@ function void r_submit(R_State *state);
 
 function R_Pass *r_acquire_pass(R_State *state, R_PassType type);
 
-function R_Pass *r_acquire_game_with_light_pass(R_State *state, v3f camera_p, m44 perspective, m44 world_to_camera,
-                                                m44 light_proj, m44 world_to_light, b32 wire_frame);
-function R_Pass *r_acquire_game_shadow_pass(R_State *state, m44 projection, m44 world_to_camera);
-function R_Pass *r_acquire_game_without_light_pass(R_State *state, m44 perspective, m44 world_to_camera, b32 wire_frame);
-function R_Model_Instance *r_game_add_instance(R_Pass *pass, v3f p, v3f scale, v4f colour);
+function R_Pass *r_acquire_game_pass(R_State *state, R_CameraConfig world_camera, R_CameraConfig light_camera, b32 wire_frame);
+function R_Pass *r_acquire_ssao_pass(R_State *state, R_CameraConfig world_camera);
+function R_Pass *r_acquire_game_shadow_pass(R_State *state, R_CameraConfig light_camera);
+
+function R_Model_Instance *r_game_add_instance(R_State *state, v3f p, v3f scale, v4f colour);
 
 inline function R_Pass *r_acquire_ui_pass(R_State *state);
 inline function R_UI_Rect *r_ui_acquire_rect(R_Pass *pass);

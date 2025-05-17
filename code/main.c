@@ -394,7 +394,7 @@ g_update_camera(G_Camera *cam, OS_Window window, OS_Input *input, v3f look_to_up
 }
 
 function void
-game_draw(G_State *game, R_Pass *pass)
+game_draw(G_State *game, R_State *state)
 {
   {
     G_Camera cam = game->camera;
@@ -480,7 +480,7 @@ game_draw(G_State *game, R_Pass *pass)
               {
                 case G_BlockType_Grass:
                 {
-                  r_game_add_instance(pass,
+                  r_game_add_instance(state,
                                       p3,
                                       v3f_make(1.0f, 1.0f, 1.0f),
                                       RGBA(97, 154, 86, 1.0f));
@@ -488,7 +488,7 @@ game_draw(G_State *game, R_Pass *pass)
                 
                 case G_BlockType_Dirt:
                 {
-                  r_game_add_instance(pass,
+                  r_game_add_instance(state,
                                       p3,
                                       v3f_make(1.0f, 1.0f, 1.0f),
                                       RGBA(156, 122, 82, 1.0f));
@@ -503,10 +503,48 @@ game_draw(G_State *game, R_Pass *pass)
     }
   }
   
-  r_game_add_instance(pass,
+  r_game_add_instance(state,
                       game->player_p,
                       v3f_make(1.0f, 1.0f, 1.0f),
                       RGBA(94.0f, 68.0f, 121.0f, 1.0f));
+}
+
+function R_CameraConfig
+create_orthographic_camera(f32 left, f32 right, f32 bottom, f32 top, 
+                           f32 z_near, f32 z_far, v3f world_p,
+                           v3f right_in_world, v3f up_in_world, v3f front_in_world)
+{
+  R_CameraConfig result;
+  result.is_ortho = true;
+  result.p = world_p;
+  result.z_near = z_near;
+  result.z_far = z_far;
+  result.aspect_height_over_width = 1;
+  result.left = left;
+  result.right = right;
+  result.bottom = bottom;
+  result.top = top;
+  result.fov_rad = DegToRad(90);
+  result.world_vect_x = right_in_world;
+  result.world_vect_y = up_in_world;
+  result.world_vect_z = front_in_world;
+  return(result);
+}
+
+function R_CameraConfig
+camera_config_from_game_camera(G_Camera camera)
+{
+  R_CameraConfig result;
+  result.is_ortho = false;
+  result.p = camera.look_from;
+  result.z_near = camera.near_z;
+  result.z_far = camera.far_z;
+  result.aspect_height_over_width = camera.aspect;
+  result.fov_rad = camera.fov_rad;
+  result.world_vect_x = camera.x;
+  result.world_vect_y = camera.y;
+  result.world_vect_z = camera.z;
+  return(result);
 }
 
 int __stdcall
@@ -611,62 +649,19 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PSTR lpCmd, int nShowCmd)
     up = v3f_normalize_or_zero(up);
     light_dir = v3f_normalize_or_zero(light_dir);
     
-    R_Pass *shadow_pass = r_acquire_game_shadow_pass(&renderer_state,
-                                                     m44_make_orthographic_z01(-50, 50, -50, 50, 0.0f, 500.0f),
-                                                     (m44)
-                                                     {
-                                                       right.x, right.y, right.z, -v3f_dot(light_p, right),
-                                                       up.x, up.y, up.z, -v3f_dot(light_p, up),
-                                                       light_dir.x, light_dir.y, light_dir.z, -v3f_dot(light_p, light_dir),
-                                                       0.0f, 0.0f, 0.0f, 1.0f,
-                                                     });
-    
+    game_draw(&game_state, &renderer_state);
+
+    R_CameraConfig smap_camera = create_orthographic_camera(-50, 50, -50, 50, 0.0f, 500.0f, light_p, right, up, light_dir);
+    R_CameraConfig game_camera = camera_config_from_game_camera(game_state.camera);
+
+    R_Pass *shadow_pass = r_acquire_game_shadow_pass(&renderer_state, smap_camera);
     r_game_add_directional_light(shadow_pass, light_p, light_dir, light_intensity);
-    game_draw(&game_state, shadow_pass);
-    
-    R_Pass *light_pass = r_acquire_game_with_light_pass(&renderer_state, 
-                                                        game_state.camera.look_from,
-                                                        m44_perspective_dx11(game_state.camera.aspect, game_state.camera.fov_rad,
-                                                                             game_state.camera.near_z, game_state.camera.far_z),
-                                                        (m44)
-                                                        {
-                                                          game_state.camera.x.x, game_state.camera.x.y, game_state.camera.x.z, -v3f_dot(game_state.camera.look_from, game_state.camera.x),
-                                                          game_state.camera.y.x, game_state.camera.y.y, game_state.camera.y.z, -v3f_dot(game_state.camera.look_from, game_state.camera.y),
-                                                          game_state.camera.z.x, game_state.camera.z.y, game_state.camera.z.z, -v3f_dot(game_state.camera.look_from, game_state.camera.z),
-                                                          0.0f, 0.0f, 0.0f, 1.0f,
-                                                        },
-                                                        m44_make_orthographic_z01(-50, 50, -50, 50, 0.0f, 500.0f),
-                                                        (m44)
-                                                        {
-                                                          right.x, right.y, right.z, -v3f_dot(light_p, right),
-                                                          up.x, up.y, up.z, -v3f_dot(light_p, up),
-                                                          light_dir.x, light_dir.y, light_dir.z, -v3f_dot(light_p, light_dir),
-                                                          0.0f, 0.0f, 0.0f, 1.0f,
-                                                        },
-                                                        game_state.debug_wire_frame);
+
+    r_acquire_ssao_pass(&renderer_state, game_camera);
+    //r_acquire_ssao_blur_pass(&renderer_state);
+
+    R_Pass *light_pass = r_acquire_game_pass(&renderer_state, game_camera, smap_camera, game_state.debug_wire_frame);
     r_game_add_directional_light(light_pass, light_p, light_dir, light_intensity);
-    game_draw(&game_state, light_pass);
-    
-#if 0
-    R_Pass *no_light_pass = r_acquire_game_without_light_pass(&renderer_state, 
-                                                              m44_perspective_dx11(game_state.camera.aspect, game_state.camera.fov_rad,
-                                                                                   game_state.camera.near_z, game_state.camera.far_z),
-                                                              (m44)
-                                                              {
-                                                                game_state.camera.x.x, game_state.camera.x.y, game_state.camera.x.z, -v3f_dot(game_state.camera.look_from, game_state.camera.x),
-                                                                game_state.camera.y.x, game_state.camera.y.y, game_state.camera.y.z, -v3f_dot(game_state.camera.look_from, game_state.camera.y),
-                                                                game_state.camera.z.x, game_state.camera.z.y, game_state.camera.z.z, -v3f_dot(game_state.camera.look_from, game_state.camera.z),
-                                                                0.0f, 0.0f, 0.0f, 1.0f,
-                                                              },
-                                                              game_state.debug_wire_frame);
-    
-    
-    
-    r_game_without_light_add_instance(no_light_pass,
-                                      point_light->p,
-                                      v3f_make(0.2f, 0.2f, 0.2f),
-                                      point_light->colour);
-#endif
     
     R_Pass *ui_pass = r_acquire_ui_pass(&renderer_state);
     r_ui_textf(ui_pass, v2f_make(0, 0), v4f_make(1,0,1,1), str8("----------------------------- DEBUG -----------------------------"));
@@ -684,7 +679,7 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PSTR lpCmd, int nShowCmd)
     
     r_ui_textf(ui_pass, v2f_make(0, 28*3), v4f_make(1,1,1,1),
                str8("Active Blocks: %llu"), 
-               light_pass->game.instances_count);
+               renderer_state.instances_count);
     
     {
       String_U8_Const str = str8("Camera Roam (O): %s");

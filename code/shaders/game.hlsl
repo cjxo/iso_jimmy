@@ -107,10 +107,11 @@ float4 ps_main(VS_Output ps_inp) : SV_Target
 		}
 		else
 		{
-			float dx = 1.0f / 2048.0f;
+			float dimsx, dimsy;
+			g_shadow_map.GetDimensions(dimsx, dimsy);
+			float dx = 1.0f / dimsx;
 			float current_depth = light_p.z;
 			float2 shadow_tex_p = float2(light_p.x * 0.5f + 0.5f, 1.0f - (light_p.y * 0.5f + 0.5f));
-
 			const float2 offsets[] =
 			{
 				float2(-dx, -dx), float2(0.0f, -dx), float2(dx, -dx),
@@ -119,7 +120,7 @@ float4 ps_main(VS_Output ps_inp) : SV_Target
 			};
 			
 			shadow_multiplier = 0;
-			float2 t = frac(2048.0f * shadow_tex_p);
+			float2 t = frac(dimsx * shadow_tex_p);
 			[unroll]
 			for (uint i = 0; i < 9; ++i)
 			{
@@ -187,14 +188,9 @@ float4 ps_main(VS_Output ps_inp) : SV_Target
 	float4 c_ambient = float4(float3(0.1,0.1,0.1) * M_ambient, 1.0f);
 	c_final = saturate(c_ambient * ps_inp.colour + c_accum);
 	
-	return c_final;
-	//return float4(M_ambient, M_ambient, M_ambient, 1);
+	//return c_final;
+	return float4(M_ambient, M_ambient, M_ambient, 1);
 	//return float4(ps_inp.uv, 0, 1);
-}
-
-float4 ps_nolight(VS_Output ps_inp) : SV_Target
-{
-	return(ps_inp.colour);
 }
 
 float4 vs_shadow_only(Vertex vertex, uint iid : SV_InstanceID) : SV_Position
