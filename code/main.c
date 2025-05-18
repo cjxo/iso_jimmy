@@ -394,6 +394,48 @@ g_update_camera(G_Camera *cam, OS_Window window, OS_Input *input, v3f look_to_up
 }
 
 function void
+game_add_cube(R_State *state, b32 left_block_active, b32 right_block_active, b32 top_block_active,
+              b32 bottom_block_active, b32 back_block_active, b32 front_block_active,
+              v3f p, v3f scale, v4f colour)
+{
+  // front face;
+  if (!back_block_active)
+  {
+    r_game_add_plane(state, p, scale, v3f_make(0.0f, 0.0f, 0.0f), colour);
+  }
+
+  // right face;
+  if (!right_block_active)
+  {
+    r_game_add_plane(state, p, scale, v3f_make(0.0f, 0.0f, DegToRad(90)), colour);
+  }
+
+  // back face;
+  if (!front_block_active)
+  {
+    r_game_add_plane(state, p, scale, v3f_make(0.0f, 0.0f, DegToRad(180)), colour);
+  }
+
+  // left face;
+  if (!left_block_active)
+  {
+    r_game_add_plane(state, p, scale, v3f_make(0.0f, 0.0f, DegToRad(270)), colour);
+  }
+
+  // top face
+  if (!top_block_active)
+  {
+    r_game_add_plane(state, p, scale, v3f_make(DegToRad(90), 0.0f, 0.0f), colour);
+  }
+
+  // bottom face
+  if (!bottom_block_active)
+  {
+    r_game_add_plane(state, p, scale, v3f_make(DegToRad(-90), 0.0f, 0.0f), colour);
+  }
+}
+
+function void
 game_draw(G_State *game, R_State *state)
 {
   {
@@ -413,7 +455,7 @@ game_draw(G_State *game, R_State *state)
           f32 signed_dist_top = (v3f_dot(cam.top_plane.n, p3) - cam.top_plane.d);
           f32 signed_dist_bottom = (v3f_dot(cam.bottom_plane.n, p3) - cam.bottom_plane.d);
           
-          f32 radius = -0.75f;
+          f32 radius = -1.0f;
           b32 inside_camera_volume = ((signed_dist_near > radius) &&
                                       (signed_dist_far > radius) && 
                                       (signed_dist_right > radius) &&
@@ -480,18 +522,22 @@ game_draw(G_State *game, R_State *state)
               {
                 case G_BlockType_Grass:
                 {
-                  r_game_add_instance(state,
-                                      p3,
-                                      v3f_make(1.0f, 1.0f, 1.0f),
-                                      RGBA(97, 154, 86, 1.0f));
+                  game_add_cube(state,
+                                left_block_active, right_block_active, top_block_active,
+                                bottom_block_active, back_block_active, front_block_active,
+                                p3,
+                                v3f_make(1.0f, 1.0f, 1.0f),
+                                RGBA(97, 154, 86, 1.0f));
                 } break;
                 
                 case G_BlockType_Dirt:
                 {
-                  r_game_add_instance(state,
-                                      p3,
-                                      v3f_make(1.0f, 1.0f, 1.0f),
-                                      RGBA(156, 122, 82, 1.0f));
+                  game_add_cube(state,
+                                left_block_active, right_block_active, top_block_active,
+                                bottom_block_active, back_block_active, front_block_active,
+                                p3,
+                                v3f_make(1.0f, 1.0f, 1.0f),
+                                RGBA(156, 122, 82, 1.0f));
                 } break;
                 
                 InvalidDefaultCase;
@@ -503,10 +549,10 @@ game_draw(G_State *game, R_State *state)
     }
   }
   
-  r_game_add_instance(state,
-                      game->player_p,
-                      v3f_make(1.0f, 1.0f, 1.0f),
-                      RGBA(94.0f, 68.0f, 121.0f, 1.0f));
+  game_add_cube(state, false, false, false, false, false, false,
+                game->player_p,
+                v3f_make(1.0f, 1.0f, 1.0f),
+                RGBA(94.0f, 68.0f, 121.0f, 1.0f));
 }
 
 function R_CameraConfig

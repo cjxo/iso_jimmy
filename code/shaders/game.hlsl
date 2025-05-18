@@ -38,6 +38,7 @@ struct Model_Instance
 {
 	float3 p;
 	float3 scale;
+	float3 rotation;
 	float4 colour;
 };
 
@@ -62,20 +63,40 @@ Texture2D<float> g_ssao_map : register(t2);
 SamplerState g_shadow_map_sampler : register(s0);
 SamplerState g_point_sampler_clamp : register(s1);
 
+float3x3 create_rotation(float3 xyz)
+{
+	float3x3 z = float3x3(
+		cos(xyz.z), 0, -sin(xyz.z),
+		0, 1, 0,
+		sin(xyz.z), 0, cos(xyz.z)
+	);
+
+	float3x3 x = float3x3(
+		1, 0, 0,
+		0, cos(xyz.x), -sin(xyz.x),
+		0, sin(xyz.x), cos(xyz.x)
+	);
+
+	float3x3 result = mul(x, z);
+
+	return(result);
+}
+
 VS_Output vs_main(Vertex vertex, uint iid : SV_InstanceID)
 {
 	VS_Output result;
 	
 	Model_Instance instance = g_model_instances[iid];
 	
-	float4 world_coordinate = float4(vertex.v * instance.scale + instance.p, 1.0f);
+	float3x3 rot = create_rotation(instance.rotation);
+	float4 world_coordinate = float4(mul(rot, vertex.v) * instance.scale + instance.p, 1.0f);
 	float4 camera_coordinate = mul(g_world_to_camera, world_coordinate);
 	result.p = mul(g_proj, camera_coordinate);
 	result.world_p = world_coordinate.xyz;
 	result.colour = instance.colour;
 	result.ssao_p = mul(g_proj, camera_coordinate);
 	result.p_light_proj = mul(g_light_proj, mul(g_world_to_light, world_coordinate));
-	result.normal = vertex.n;
+	result.normal = mul(rot, vertex.n);
 	result.uv = vertex.uv;
 	return(result);
 }
@@ -91,27 +112,28 @@ float4 ps_main(VS_Output ps_inp) : SV_Target
 	V /= V_d;
 
 	float M_diffuse     = 1.0f;
-  float M_specular    = 0.5f;
-  float M_shininess   = 8.0f;
+  	float M_specular    = 0.5f;
+  	float M_shininess   = 8.0f;
 
 	Light light = g_light;
-	float shadow_multiplier = 1.0f;
-#if 1
+	float shadow_multiplier = 0.0f;
 	{
 		float4 light_p = ps_inp.p_light_proj;
 		light_p.xyz /= light_p.w;
 
 		if (light_p.z > 1.0f)
 		{
-			shadow_multiplier = 0.0f;
+			shadow_multiplier = 1.0f;
 		}
 		else
 		{
 			float dimsx, dimsy;
 			g_shadow_map.GetDimensions(dimsx, dimsy);
 			float dx = 1.0f / dimsx;
+			//float bias = max(0.0005 * (1.0 - dot(N, -light.dir)), 0.00005);
 			float current_depth = light_p.z;
 			float2 shadow_tex_p = float2(light_p.x * 0.5f + 0.5f, 1.0f - (light_p.y * 0.5f + 0.5f));
+#if 0
 			const float2 offsets[] =
 			{
 				float2(-dx, -dx), float2(0.0f, -dx), float2(dx, -dx),
@@ -134,18 +156,11 @@ float4 ps_main(VS_Output ps_inp) : SV_Target
 			}
 
 			shadow_multiplier /= 9.0f;
-
-#if 0
-			float s = g_shadow_map.Sample(g_shadow_map_sampler, shadow_tex_p).r;
-			if (s < current_depth)
-			{
-				shadow_multiplier = 0.2f;
-			}
+#else
+			shadow_multiplier = current_depth < g_shadow_map.Sample(g_shadow_map_sampler, shadow_tex_p).r ? 1.0f : 0.2f;
 #endif
 		}
 	}
-#endif
-
 	switch (light.type)
 	{
 		case LightType_PointLight:
@@ -165,18 +180,20 @@ float4 ps_main(VS_Output ps_inp) : SV_Target
 			float R_dot_V = max(dot(R, V), 0);
 			float4 specular = M_specular * pow(R_dot_V, M_shininess) * light.colour;
 			float4 diffuse = M_diffuse * N_dot_L * light.colour * ps_inp.colour;
-			c_accum = saturate((diffuse + specular)*atten + c_accum);
+			c_accum = saturate((diffuse + specular)*atten*shadow_multiplier + c_accum);
 		} break;
 
 		case LightType_DirectionalLight:
 		{
 			float3 L = normalize(light.dir);
 			float3 R = normalize(reflect(L, N));
-			float N_dot_L = max(dot(N, -L), 0);
-			float R_dot_V = max(dot(R, V), 0);
+			float3 H = normalize(-L + V);
+			float N_dot_L = max(dot(N, -L), 0.0f);	
+			//float R_dot_V = max(dot(V, R), 0);
+			float R_dot_V = max(dot(N, H), 0.0f);
 			float4 specular = M_specular * pow(R_dot_V, M_shininess) * light.colour;
 			float4 diffuse = M_diffuse * N_dot_L * light.colour * ps_inp.colour;
-			c_accum = saturate((diffuse + specular) * shadow_multiplier + c_accum);
+			c_accum = saturate((diffuse + specular)*shadow_multiplier + c_accum);
 		} break;
 	}
 	
@@ -185,11 +202,11 @@ float4 ps_main(VS_Output ps_inp) : SV_Target
 	proj_p.y = -proj_p.y * 0.5f + 0.5f;
 
 	float M_ambient = g_ssao_map.Sample(g_point_sampler_clamp, proj_p.xy);
-	float4 c_ambient = float4(float3(0.1,0.1,0.1) * M_ambient, 1.0f);
+	float4 c_ambient = float4(float3(0.05,0.05,0.05)*M_ambient, 1.0f);
 	c_final = saturate(c_ambient * ps_inp.colour + c_accum);
 	
-	//return c_final;
-	return float4(M_ambient, M_ambient, M_ambient, 1);
+	return c_final;
+	//return float4(M_ambient, M_ambient, M_ambient, 1);
 	//return float4(ps_inp.uv, 0, 1);
 }
 
@@ -197,7 +214,8 @@ float4 vs_shadow_only(Vertex vertex, uint iid : SV_InstanceID) : SV_Position
 {
 	Model_Instance instance = g_model_instances[iid];
 	
-	float4 world_coordinate = float4(vertex.v * instance.scale + instance.p, 1.0f);
+	float3x3 rot = create_rotation(instance.rotation);
+	float4 world_coordinate = float4(mul(rot, vertex.v) * instance.scale + instance.p, 1.0f);
 	float4 camera_coordinate = mul(g_world_to_camera, world_coordinate);
 	return mul(g_proj, camera_coordinate);
 }

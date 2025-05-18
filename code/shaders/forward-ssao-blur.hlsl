@@ -36,7 +36,9 @@ SamplerState g_sampler : register(s0);
 
 float ps_main(VS_Output_SSAO ps_inp) : SV_Target0
 {
-	float2 texel_sz = 1.0f / float2(1280.0f, 720.0f);
+	float2 texel_sz;
+	g_ssao_map.GetDimensions(texel_sz.x, texel_sz.y);
+	texel_sz = 1.0f / texel_sz;
 	float result = 0.0f;
 	for (int x = -2; x < 2; ++x)
 	{

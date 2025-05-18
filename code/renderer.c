@@ -619,6 +619,7 @@ dx11_create_game_state(R_State *state)
     +0.5f, -0.5f, -0.5f,      +1.0f, +0.0f, +0.0f,    +0.0f, 1.0f, 0.0f,     +0.0f, +0.0f, -1.0f,         1.0f, 1.0f,
     +0.5f, +0.5f, -0.5f,      +1.0f, +0.0f, +0.0f,    +0.0f, 1.0f, 0.0f,     +0.0f, +0.0f, -1.0f,         1.0f, 0.0f,
     
+#if 0
     // right face
     +0.5f, +0.5f, -0.5f,     +0.0f, +0.0f, +1.0f,     +0.0f, +1.0f, 0.0f,    +1.0f, +0.0f, +0.0f,     0.0f, 0.0f,
     +0.5f, -0.5f, -0.5f,     +0.0f, +0.0f, +1.0f,     +0.0f, +1.0f, 0.0f,    +1.0f, +0.0f, +0.0f,     0.0f, 1.0f,
@@ -648,12 +649,14 @@ dx11_create_game_state(R_State *state)
     -0.5f, -0.5f, +0.5f,     +1.0f, +0.0f, +0.0f,     +0.0f, +0.0f, -1.0f,   +0.0f, -1.0f, +0.0f,     0.0f, 1.0f,
     +0.5f, -0.5f, +0.5f,     +1.0f, +0.0f, +0.0f,     +0.0f, +0.0f, -1.0f,   +0.0f, -1.0f, +0.0f,     1.0f, 1.0f,
     +0.5f, -0.5f, -0.5f,     +1.0f, +0.0f, +0.0f,     +0.0f, +0.0f, -1.0f,   +0.0f, -1.0f, +0.0f,     1.0f, 0.0f,
+#endif
   };
   
   u32 cube_ibuffer[] = {
     0, 1, 2,
     2, 3, 0,
-    
+
+#if 0    
     4, 5, 6,
     6, 7, 4,
     
@@ -668,6 +671,7 @@ dx11_create_game_state(R_State *state)
     
     20, 21, 22,
     22, 23, 20,
+#endif
   };
   
   state->cube_model = dx11_create_model(state->device,
@@ -820,7 +824,7 @@ dx11_create_font_atlas(R_State *state)
 function void
 dx11_create_shadowmap(R_State *state)
 {
-  f32 dims = 1024;
+  f32 dims = 2048;
   D3D11_VIEWPORT vp;
   D3D11_TEXTURE2D_DESC tdesc;
   D3D11_DEPTH_STENCIL_VIEW_DESC dsvdesc;
@@ -888,9 +892,9 @@ dx11_create_shadowmap(R_State *state)
         if (SUCCEEDED(hr))
         {
           rasterdesc.FillMode = D3D11_FILL_SOLID;
-          rasterdesc.CullMode = D3D11_CULL_BACK;
+          rasterdesc.CullMode = D3D11_CULL_FRONT;
           rasterdesc.FrontCounterClockwise = TRUE;
-          rasterdesc.DepthBias = 10000;
+          rasterdesc.DepthBias = 100;
           rasterdesc.DepthBiasClamp = 0.0f;
           rasterdesc.SlopeScaledDepthBias = 1.0f;
           rasterdesc.DepthClipEnable = TRUE;
@@ -1147,7 +1151,9 @@ dx11_create_gbuffer(R_State *state)
 function void
 r_init(R_State *renderer_state, OS_Window window)
 {
-  renderer_state->arena = m_arena_reserve(MB(2));
+  renderer_state->temp_arena = m_arena_reserve(MB(2));
+  renderer_state->arena = m_arena_reserve(MB(64));
+  renderer_state->instances = M_Arena_PushArray(renderer_state->arena, R_Model_Instance, R_MaxModelInstances);
   dx11_create_device(renderer_state);
   dx11_create_swap_chain(renderer_state, window);
   dx11_create_rasterizer_states(renderer_state);
@@ -1279,7 +1285,6 @@ r_submit(R_State *state)
         //
         // render the game
         //
-        ID3D11DeviceContext_ClearDepthStencilView(state->device_context, state->main_dsv, D3D11_CLEAR_DEPTH, 1.0f, 0);
         ID3D11DeviceContext_OMSetRenderTargets(state->device_context, 1, &state->back_buffer_rtv, state->main_dsv);
         ID3D11DeviceContext_ClearDepthStencilView(state->device_context, state->main_dsv, D3D11_CLEAR_DEPTH, 1.0f, 0);
         ID3D11DeviceContext_VSSetShader(state->device_context, state->vshaders[R_VShaderType_Game], null, 0);
@@ -1395,10 +1400,12 @@ r_submit(R_State *state)
           ID3D11DeviceContext_Draw(state->device_context, 4, 0);
 
           // Blur the SSAO map
+          ID3D11Buffer *null_buffers[] = {0,0};
           ID3D11DeviceContext_OMSetRenderTargets(state->device_context, 1, &state->scene_ssao_blur_rtv, null);
           ID3D11DeviceContext_VSSetShader(state->device_context, state->vshaders[R_VShaderType_GameSSAO_Blur], null, 0);
           ID3D11DeviceContext_PSSetShader(state->device_context, state->pshaders[R_PShaderType_GameSSAO_Blur], null, 0);
           ID3D11DeviceContext_PSSetSamplers(state->device_context, 0, 1, &state->point_sampler_wrap);
+          ID3D11DeviceContext_PSSetConstantBuffers(state->device_context, 0, 2, null_buffers);
           ID3D11DeviceContext_PSSetShaderResources(state->device_context, 0, 1, &state->scene_ssao_srv);
           ID3D11DeviceContext_Draw(state->device_context, 4, 0);
         }
@@ -1501,7 +1508,7 @@ r_submit(R_State *state)
   
   IDXGISwapChain_Present(state->swap_chain, 1, 0);
   
-  m_arena_clear(state->arena);
+  m_arena_clear(state->temp_arena);
   state->instances_count = 0;
   state->first_pass = state->last_pass = 0;
 }
@@ -1509,7 +1516,7 @@ r_submit(R_State *state)
 function R_Pass *
 r_acquire_pass(R_State *state, R_PassType type)
 {
-  R_Pass *result = M_Arena_PushStruct(state->arena, R_Pass);
+  R_Pass *result = M_Arena_PushStruct(state->temp_arena, R_Pass);
   R_Pass zero_pass = {0};
   *result = zero_pass;
   SLLPushBack(state->first_pass, state->last_pass, result);
@@ -1575,16 +1582,17 @@ r_acquire_game_shadow_pass(R_State *state, R_CameraConfig light_camera)
 }
 
 function R_Model_Instance *
-r_game_add_instance(R_State *state, v3f p, v3f scale, v4f colour)
+r_game_add_plane(R_State *state, v3f p, v3f scale, v3f rotation, v4f colour)
 {
   //Assert((pass->type == R_PassType_Game) || (pass->type == R_PassType_Game_Shadow));
   
   //R_Pass_Game *g = &(pass->game);
   //Assert(g->instances_count < ArrayCount(g->instances));
-  Assert(state->instances_count < ArrayCount(state->instances));
+  Assert(state->instances_count < R_MaxModelInstances);
   
   R_Model_Instance *result = state->instances + state->instances_count++;
   result->p = p;
+  result->rotation = rotation;
   result->scale = scale;
   result->colour = colour;
   return(result);

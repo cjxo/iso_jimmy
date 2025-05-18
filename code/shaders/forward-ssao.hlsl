@@ -25,23 +25,44 @@ struct Model_Instance
 {
 	float3 p;
 	float3 scale;
+	float3 rotation;
 	float4 colour;
 };
 
 // TODO: We need a deferred renderer
 StructuredBuffer<Model_Instance> g_model_instances : register(t0);
 
+float3x3 create_rotation(float3 xyz)
+{
+	float3x3 z = float3x3(
+		cos(xyz.z), 0, -sin(xyz.z),
+		0, 1, 0,
+		sin(xyz.z), 0, cos(xyz.z)
+	);
+
+	float3x3 x = float3x3(
+		1, 0, 0,
+		0, cos(xyz.x), -sin(xyz.x),
+		0, sin(xyz.x), cos(xyz.x)
+	);
+
+	float3x3 result = mul(x, z);
+
+	return(result);
+}
+
 VS_Output vs_forward_ssao_buffer_accum(Vertex vertex, uint iid : SV_InstanceID)
 {
 	VS_Output result;
 	
 	Model_Instance instance = g_model_instances[iid];
-	
-	float4 world_coordinate = float4(vertex.v * instance.scale + instance.p, 1.0f);
+	float3x3 rot = create_rotation(instance.rotation);
+
+	float4 world_coordinate = float4(mul(rot, vertex.v) * instance.scale + instance.p, 1.0f);
 	float4 camera_coordinate = mul(g_world_to_camera, world_coordinate);
 	result.p = mul(g_proj, camera_coordinate);
 	result.cam_p = camera_coordinate.xyz;
-	result.normal = mul(g_world_to_camera, float4(vertex.n, 0.0f)).xyz;
+	result.normal = mul(g_world_to_camera, float4(mul(rot, vertex.n), 0.0f)).xyz;
 
 	return(result);
 }
@@ -68,7 +89,7 @@ struct VS_Output_SSAO
 cbuffer VertexShader_Constants1 : register(b1)
 {
 	float4 g_far_plane_ptr[4];
-	float4 g_samples_for_ssao[64];
+	float4 g_samples_for_ssao[32];
 };
 
 VS_Output_SSAO vs_forward_ssao(uint vid : SV_VertexID)
@@ -107,11 +128,11 @@ SamplerState g_point_sampler_random_vec : register(s1);
 
 float ps_forward_ssao(VS_Output_SSAO ps_inp) : SV_Target0
 {
-	uint g_sample_count = 16;
-	float g_occlusion_radius = 0.5f;
+	uint g_sample_count = 32;
+	float g_occlusion_radius = 1.5f;
 	float g_occlusion_fade_start = 0.2f;
-	float g_occlusion_fade_end = 2.0f;
-	float g_surface_epsilon = 0.025f;
+	float g_occlusion_fade_end = 4.0f;
+	float g_surface_epsilon = 0.085f;
 	
 	float2 uv = float2(ps_inp.uv.x, ps_inp.uv.y);
 	// p -- the point we are computing the ambient occlusion for.
@@ -166,5 +187,5 @@ float ps_forward_ssao(VS_Output_SSAO ps_inp) : SV_Target0
 
 	float result =  1.0f - (occlusion_sum / (float)g_sample_count);
 	//return result;
-	return saturate(pow(result, 4.0f));
+	return saturate(pow(result, 6.0f));
 }

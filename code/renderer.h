@@ -57,7 +57,7 @@ typedef struct
 {
   v3f p;
   v3f scale;
-  // v4f quaterion;
+  v3f rotation;
   v4f colour;
 } R_Model_Instance;
 
@@ -71,7 +71,7 @@ enum
   R_PassType_Count,
 };
 
-#define R_MaxModelInstances 2048*8
+#define R_MaxModelInstances 2048*24
 
 typedef struct
 {
@@ -142,7 +142,7 @@ typedef struct
   m44 proj;
 } DX11_UI_VShader_Constants;
 
-#define R_SSAO_SampleCount 16
+#define R_SSAO_SampleCount 32
 __declspec(align(16)) typedef struct
 {
   v4f far_plane_ptr[4], samples_for_ssao[R_SSAO_SampleCount];
@@ -193,7 +193,7 @@ typedef enum
 
 typedef struct
 {
-  M_Arena *arena;
+  M_Arena *arena, *temp_arena;
   
   ID3D11Device *device;
   ID3D11Device1 *device1;
@@ -243,7 +243,7 @@ typedef struct
   HFONT font_handle;
   R_Font font;
   
-  R_Model_Instance instances[R_MaxModelInstances];
+  R_Model_Instance *instances;
   u64 instances_count;
   R_Pass *first_pass, *last_pass;
 } R_State;
@@ -257,7 +257,7 @@ function R_Pass *r_acquire_game_pass(R_State *state, R_CameraConfig world_camera
 function R_Pass *r_acquire_ssao_pass(R_State *state, R_CameraConfig world_camera);
 function R_Pass *r_acquire_game_shadow_pass(R_State *state, R_CameraConfig light_camera);
 
-function R_Model_Instance *r_game_add_instance(R_State *state, v3f p, v3f scale, v4f colour);
+function R_Model_Instance *r_game_add_plane(R_State *state, v3f p, v3f scale, v3f rotation, v4f colour);
 
 inline function R_Pass *r_acquire_ui_pass(R_State *state);
 inline function R_UI_Rect *r_ui_acquire_rect(R_Pass *pass);
