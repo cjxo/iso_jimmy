@@ -202,6 +202,24 @@ m44_identity(void)
   return(result);
 }
 
+inline function m44
+m44_look_at_dir(v3f look_from, v3f temp_up, v3f look_at_dir)
+{
+  f32 scaling = v3f_dot(temp_up, look_at_dir) / v3f_dot(look_at_dir, look_at_dir);
+  v3f up = v3f_sub(temp_up, v3f_scale(scaling, look_at_dir));
+  v3f right = v3f_normalize_or_zero(v3f_cross(up, look_at_dir));
+  up = v3f_normalize_or_zero(up);
+  v3f front = v3f_normalize_or_zero(look_at_dir);
+
+  m44 result =  {
+    right.x, right.y, right.z, -v3f_dot(look_from, right),
+    up.x, up.y, up.z, -v3f_dot(look_from, up),
+    front.x, front.y, front.z, -v3f_dot(look_from, front),
+    0.0f, 0.0f, 0.0f, 1.0f,
+  };
+  return(result);
+}
+
 inline function Plane
 plane_create(v3f p, v3f n)
 {

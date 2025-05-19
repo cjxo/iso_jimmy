@@ -66,6 +66,7 @@ enum
 {
   R_PassType_Game,
   R_PassType_Game_Shadow,
+  R_PassType_Game_ShadowCube,
   R_PassType_Game_SSAO,
   R_PassType_UI,
   R_PassType_Count,
@@ -133,8 +134,8 @@ typedef struct
 __declspec(align(16)) typedef struct
 {
 	R_Light light;
+  f32 z_far;
   v3f eye_p_in_world;
-  f32 pad_a[1];
 } DX11_PixelShader_Constants;
 
 typedef struct
@@ -152,6 +153,7 @@ typedef enum
 {
   R_VShaderType_Game,
   R_VShaderType_GameShadows,
+  R_VShaderType_GameCubeShadows,
   R_VShaderType_GameSSAO_Accum,
   R_VShaderType_GameSSAO,
   R_VShaderType_GameSSAO_Blur,
@@ -163,6 +165,7 @@ typedef enum
 {
   R_PShaderType_Game,
   R_PShaderType_GameSSAO_Accum,
+  R_PShaderType_GameCubeShadows,
   R_PShaderType_GameSSAO,
   R_PShaderType_GameSSAO_Blur,
   R_PShaderType_UI,
@@ -237,6 +240,10 @@ typedef struct
   D3D11_VIEWPORT shadow_map_vp;
   ID3D11DepthStencilView *shadow_map_dsv;
   ID3D11ShaderResourceView *shadow_map_srv;
+
+  D3D11_VIEWPORT shadow_cubemap_vp;
+  ID3D11DepthStencilView *shadow_cubemap_dsv[6];
+  ID3D11ShaderResourceView *shadow_cubemap_srv;
   
   R_Model cube_model;
   
@@ -256,6 +263,7 @@ function R_Pass *r_acquire_pass(R_State *state, R_PassType type);
 function R_Pass *r_acquire_game_pass(R_State *state, R_CameraConfig world_camera, R_CameraConfig light_camera, b32 wire_frame);
 function R_Pass *r_acquire_ssao_pass(R_State *state, R_CameraConfig world_camera);
 function R_Pass *r_acquire_game_shadow_pass(R_State *state, R_CameraConfig light_camera);
+function R_Pass *r_acquire_game_shadowcube_pass(R_State *state, R_CameraConfig light_camera);
 
 function R_Model_Instance *r_game_add_plane(R_State *state, v3f p, v3f scale, v3f rotation, v4f colour);
 

@@ -22,7 +22,7 @@ cbuffer PixelShader_Constants : register(b1)
 {
 	Light g_light;
 	float3 g_eye_p_in_world;
-	float g_pshad0_pad_a[1];
+	float g_light_z_far;
 };
 
 struct Vertex
@@ -59,6 +59,7 @@ struct VS_Output
 StructuredBuffer<Model_Instance> g_model_instances : register(t0);
 Texture2D<float4> g_shadow_map : register(t1);
 Texture2D<float> g_ssao_map : register(t2);
+TextureCube<float> g_shadow_cubemap : register(t3);
 
 SamplerState g_shadow_map_sampler : register(s0);
 SamplerState g_point_sampler_clamp : register(s1);
@@ -147,17 +148,46 @@ float4 ps_main(VS_Output ps_inp) : SV_Target
 			for (uint i = 0; i < 9; ++i)
 			{
 				float2 uv = shadow_tex_p + offsets[i];
+#if 0
 				float s0 = g_shadow_map.Sample(g_shadow_map_sampler, uv).r;
 				float s1 = g_shadow_map.Sample(g_shadow_map_sampler, uv + float2(dx, 0)).r;
 				float s2 = g_shadow_map.Sample(g_shadow_map_sampler, uv + float2(0, dx)).r;
 				float s3 = g_shadow_map.Sample(g_shadow_map_sampler, uv + dx).r;
 				float4 tests = (current_depth < float4(s0, s1, s2, s3)) ? 1.0f : 0.2f;
 				shadow_multiplier += lerp(lerp(tests.x, tests.y, t.x), lerp(tests.z, tests.w, t.x), t.y);
+#else
+				shadow_multiplier += (current_depth < g_shadow_map.Sample(g_shadow_map_sampler, uv + dx).r) ? 1.0f : 0.2f;
+#endif
 			}
 
 			shadow_multiplier /= 9.0f;
 #else
-			shadow_multiplier = current_depth < g_shadow_map.Sample(g_shadow_map_sampler, shadow_tex_p).r ? 1.0f : 0.2f;
+#if 1
+			if (g_light.type == 0)
+			{
+				float3 to_hit = ps_inp.world_p - g_light.p;
+				float to_hit_len = length(to_hit);
+				float depth = g_shadow_cubemap.Sample(g_shadow_map_sampler, to_hit) * 25.0f;
+				shadow_multiplier = (to_hit_len - 0.05f < depth) ? 1.0f : 0.2f;
+			}
+			else
+			{
+				float depth = g_shadow_map.Sample(g_shadow_map_sampler, shadow_tex_p).r;
+				shadow_multiplier = (current_depth < depth) ? 1.0f : 0.2f;
+			}
+#else
+			[unroll]
+			for (int y = -1; y <= 1; ++y)
+			{
+				[unroll]
+				for (int x = -1; x <= 1; ++x)
+				{
+					float depth = g_shadow_map.Sample(g_shadow_map_sampler, shadow_tex_p + float2(x, y) * dx).r;
+					shadow_multiplier += ((current_depth - 0.00005f) < depth) ? 1.0f : 0.2f;
+				}
+			}
+			shadow_multiplier /= 9.0f;
+#endif
 #endif
 		}
 	}
@@ -210,7 +240,9 @@ float4 ps_main(VS_Output ps_inp) : SV_Target
 	//return float4(ps_inp.uv, 0, 1);
 }
 
-float4 vs_shadow_only(Vertex vertex, uint iid : SV_InstanceID) : SV_Position
+//[maxvertexcount()]
+
+float4 vs_directional_shadow(Vertex vertex, uint iid : SV_InstanceID) : SV_Position
 {
 	Model_Instance instance = g_model_instances[iid];
 	
@@ -218,4 +250,30 @@ float4 vs_shadow_only(Vertex vertex, uint iid : SV_InstanceID) : SV_Position
 	float4 world_coordinate = float4(mul(rot, vertex.v) * instance.scale + instance.p, 1.0f);
 	float4 camera_coordinate = mul(g_world_to_camera, world_coordinate);
 	return mul(g_proj, camera_coordinate);
+}
+
+struct VS_Omnidirectional_Output
+{
+	float4 p : SV_Position;
+	float3 pos : WorldP;
+};
+
+VS_Omnidirectional_Output vs_omnidirectional_shadow(Vertex vertex, uint iid : SV_InstanceID)
+{
+	Model_Instance instance = g_model_instances[iid];
+
+	float3x3 rot = create_rotation(instance.rotation);
+	float4 world_coordinate = float4(mul(rot, vertex.v) * instance.scale + instance.p, 1.0f);
+	float4 camera_coordinate = mul(g_world_to_camera, world_coordinate);
+
+	VS_Omnidirectional_Output result;
+	result.p = mul(g_proj, camera_coordinate);
+	result.pos = world_coordinate.xyz;
+	return(result);
+}
+
+float ps_omnidirectional_shadow(VS_Omnidirectional_Output ps_inp) : SV_Depth
+{
+	float dist = length(g_light.p - ps_inp.pos);
+	return dist / 25;
 }

@@ -2,6 +2,7 @@ global_variable WCHAR *global_vshader_files[] =
 {
   [R_VShaderType_Game] = L"..\\code\\shaders\\game.hlsl",
   [R_VShaderType_GameShadows] = L"..\\code\\shaders\\game.hlsl",
+  [R_VShaderType_GameCubeShadows] = L"..\\code\\shaders\\game.hlsl",
   [R_VShaderType_GameSSAO_Accum] = L"..\\code\\shaders\\forward-ssao.hlsl",
   [R_VShaderType_GameSSAO] = L"..\\code\\shaders\\forward-ssao.hlsl",
   [R_VShaderType_GameSSAO_Blur] = L"..\\code\\shaders\\forward-ssao-blur.hlsl",
@@ -11,7 +12,8 @@ global_variable WCHAR *global_vshader_files[] =
 global_variable char *global_vshader_entries[] =
 {
   [R_VShaderType_Game] = "vs_main",
-  [R_VShaderType_GameShadows] = "vs_shadow_only",
+  [R_VShaderType_GameShadows] = "vs_directional_shadow",
+  [R_VShaderType_GameCubeShadows] = "vs_omnidirectional_shadow",
   [R_VShaderType_GameSSAO_Accum] = "vs_forward_ssao_buffer_accum",
   [R_VShaderType_GameSSAO] = "vs_forward_ssao",
   [R_VShaderType_GameSSAO_Blur] = "vs_main",
@@ -21,6 +23,7 @@ global_variable char *global_vshader_entries[] =
 global_variable WCHAR *global_pshader_files[] =
 {
   [R_PShaderType_Game] = L"..\\code\\shaders\\game.hlsl",
+  [R_PShaderType_GameCubeShadows] = L"..\\code\\shaders\\game.hlsl",
   [R_PShaderType_GameSSAO_Accum] = L"..\\code\\shaders\\forward-ssao.hlsl",
   [R_PShaderType_GameSSAO] = L"..\\code\\shaders\\forward-ssao.hlsl",
   [R_PShaderType_GameSSAO_Blur] = L"..\\code\\shaders\\forward-ssao-blur.hlsl",
@@ -30,6 +33,7 @@ global_variable WCHAR *global_pshader_files[] =
 global_variable char *global_pshader_entries[] =
 {
   [R_PShaderType_Game] = "ps_main",
+  [R_PShaderType_GameCubeShadows] = "ps_omnidirectional_shadow",
   [R_PShaderType_GameSSAO_Accum] = "ps_forward_ssao_buffer_accum",
   [R_PShaderType_GameSSAO] = "ps_forward_ssao",
   [R_PShaderType_GameSSAO_Blur] = "ps_main",
@@ -894,7 +898,7 @@ dx11_create_shadowmap(R_State *state)
           rasterdesc.FillMode = D3D11_FILL_SOLID;
           rasterdesc.CullMode = D3D11_CULL_FRONT;
           rasterdesc.FrontCounterClockwise = TRUE;
-          rasterdesc.DepthBias = 100;
+          rasterdesc.DepthBias = 10000;
           rasterdesc.DepthBiasClamp = 0.0f;
           rasterdesc.SlopeScaledDepthBias = 1.0f;
           rasterdesc.DepthClipEnable = TRUE;
@@ -1149,6 +1153,72 @@ dx11_create_gbuffer(R_State *state)
 }
 
 function void
+dx11_create_shadow_cubemap(R_State *state)
+{
+  D3D11_TEXTURE2D_DESC tex_desc;
+  D3D11_SHADER_RESOURCE_VIEW_DESC srv_desc;
+  D3D11_DEPTH_STENCIL_VIEW_DESC dsv_desc;
+  ID3D11Texture2D *tex;
+  HRESULT hr;
+  u32 dims = 1024;
+
+  state->shadow_cubemap_vp.TopLeftX = 0.0f;
+  state->shadow_cubemap_vp.TopLeftY = 0.0f;
+  state->shadow_cubemap_vp.Width = (f32)dims;
+  state->shadow_cubemap_vp.Height = (f32)dims;
+  state->shadow_cubemap_vp.MinDepth = 0.0f;
+  state->shadow_cubemap_vp.MaxDepth = 1.0f;
+
+  tex_desc.Width = dims;
+  tex_desc.Height = dims;
+  tex_desc.MipLevels = 1;
+  tex_desc.ArraySize = 6;
+  tex_desc.Format = DXGI_FORMAT_R32_TYPELESS;
+  tex_desc.SampleDesc.Count = 1;
+  tex_desc.SampleDesc.Quality = 0;
+  tex_desc.Usage = D3D11_USAGE_DEFAULT;
+  tex_desc.BindFlags = D3D11_BIND_SHADER_RESOURCE|D3D11_BIND_DEPTH_STENCIL;
+  tex_desc.CPUAccessFlags = 0;
+  tex_desc.MiscFlags = D3D11_RESOURCE_MISC_TEXTURECUBE;
+
+  hr = ID3D11Device_CreateTexture2D(state->device, &tex_desc, 0, &tex);
+  if (!SUCCEEDED(hr))
+  {
+    Assert(!"TODO: Logging");
+  }
+
+  srv_desc.Format =  DXGI_FORMAT_R32_FLOAT;
+  srv_desc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURECUBE;
+  srv_desc.TextureCube.MostDetailedMip = 0;
+  srv_desc.TextureCube.MipLevels = 1;
+  hr = ID3D11Device_CreateShaderResourceView(state->device, (ID3D11Resource *)tex,
+                                             &srv_desc, &state->shadow_cubemap_srv);
+
+  if (!SUCCEEDED(hr))
+  {
+    Assert(!"TODO: Logging");
+  }
+
+  for (u32 i = 0; i < 6; ++i)
+  {
+    dsv_desc.Format = DXGI_FORMAT_D32_FLOAT;
+    dsv_desc.ViewDimension = D3D11_DSV_DIMENSION_TEXTURE2DARRAY;
+    dsv_desc.Flags = 0;
+    dsv_desc.Texture2DArray.MipSlice = 0;
+    dsv_desc.Texture2DArray.FirstArraySlice = D3D11_TEXTURECUBE_FACE_POSITIVE_X + i;
+    dsv_desc.Texture2DArray.ArraySize = 1;
+
+    hr = ID3D11Device_CreateDepthStencilView(state->device, (ID3D11Resource *)tex, &dsv_desc, state->shadow_cubemap_dsv + i);
+    if (!SUCCEEDED(hr))
+    {
+      Assert(!"TODO: Logging");
+    }
+  }
+
+  ID3D11Texture2D_Release(tex);
+}
+
+function void
 r_init(R_State *renderer_state, OS_Window window)
 {
   renderer_state->temp_arena = m_arena_reserve(MB(2));
@@ -1166,30 +1236,37 @@ r_init(R_State *renderer_state, OS_Window window)
   dx11_create_font_atlas(renderer_state);
   
   dx11_create_shadowmap(renderer_state);
+  dx11_create_shadow_cubemap(renderer_state);
   dx11_create_gbuffer(renderer_state);
 }
 
 function void
 r_get_projection_and_camera_matrices(R_CameraConfig camera_config, m44 *projection, m44 *camera)
 {
-  if (camera_config.is_ortho)
+  if (projection)
   {
-    *projection = m44_make_orthographic_z01(camera_config.left, camera_config.right, camera_config.bottom, camera_config.top,
-                                            camera_config.z_near, camera_config.z_far);
-  }
-  else
-  {
-    *projection = m44_perspective_dx11(camera_config.aspect_height_over_width, camera_config.fov_rad,
-                                       camera_config.z_near, camera_config.z_far);
+    if (camera_config.is_ortho)
+    {
+      *projection = m44_make_orthographic_z01(camera_config.left, camera_config.right, camera_config.bottom, camera_config.top,
+                                              camera_config.z_near, camera_config.z_far);
+    }
+    else
+    {
+      *projection = m44_perspective_dx11(camera_config.aspect_height_over_width, camera_config.fov_rad,
+                                         camera_config.z_near, camera_config.z_far);
+    }
   }
 
-  *camera = (m44)
-            {
-              camera_config.world_vect_x.x, camera_config.world_vect_x.y, camera_config.world_vect_x.z, -v3f_dot(camera_config.p, camera_config.world_vect_x),
-              camera_config.world_vect_y.x, camera_config.world_vect_y.y, camera_config.world_vect_y.z, -v3f_dot(camera_config.p, camera_config.world_vect_y),
-              camera_config.world_vect_z.x, camera_config.world_vect_z.y, camera_config.world_vect_z.z, -v3f_dot(camera_config.p, camera_config.world_vect_z),
-              0.0f, 0.0f, 0.0f, 1.0f,
-            };
+  if (camera)
+  {
+    *camera = (m44)
+              {
+                camera_config.world_vect_x.x, camera_config.world_vect_x.y, camera_config.world_vect_x.z, -v3f_dot(camera_config.p, camera_config.world_vect_x),
+                camera_config.world_vect_y.x, camera_config.world_vect_y.y, camera_config.world_vect_y.z, -v3f_dot(camera_config.p, camera_config.world_vect_y),
+                camera_config.world_vect_z.x, camera_config.world_vect_z.y, camera_config.world_vect_z.z, -v3f_dot(camera_config.p, camera_config.world_vect_z),
+                0.0f, 0.0f, 0.0f, 1.0f,
+              };
+  }
 }
 
 function void
@@ -1241,7 +1318,7 @@ r_submit(R_State *state)
           DX11_VertexShader_Constants init_cbuffer =
           {
             projection, world_to_camera,
-            light_projection, world_to_light
+            light_projection, world_to_light,
           };
           
           ID3D11DeviceContext_Map(state->device_context, (ID3D11Resource *)state->cbuffers[R_CBufferType_Game_VShader0], 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped_subrec);
@@ -1294,6 +1371,7 @@ r_submit(R_State *state)
         ID3D11DeviceContext_PSSetSamplers(state->device_context, 1, 1, &state->point_sampler_clamp);
         ID3D11DeviceContext_PSSetShaderResources(state->device_context, 1, 1, &state->shadow_map_srv);
         ID3D11DeviceContext_PSSetShaderResources(state->device_context, 2, 1, &state->scene_ssao_blur_srv);
+        ID3D11DeviceContext_PSSetShaderResources(state->device_context, 3, 1, &state->shadow_cubemap_srv);
         
         if (gwl->wire_frame)
         {
@@ -1424,6 +1502,7 @@ r_submit(R_State *state)
           {
             light_projection, world_to_light,
           };
+
           
           ID3D11DeviceContext_Map(state->device_context, (ID3D11Resource *)state->cbuffers[R_CBufferType_Game_VShader0], 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped_subrec);
           CopyMemory(mapped_subrec.pData, &init_cbuffer, mapped_subrec.RowPitch);
@@ -1451,6 +1530,92 @@ r_submit(R_State *state)
         // NOTE(cj): Cube instance
         //if (gwl->instances_count)
         {
+          ID3D11DeviceContext_DrawIndexedInstanced(state->device_context,
+                                                   state->cube_model.indices_count,
+                                                   (UINT)state->instances_count,
+                                                   0, 0, 0);
+        }
+      } break;
+
+      case R_PassType_Game_ShadowCube:
+      {
+        R_Pass_Game *gwl = &pass->game;
+
+        {
+          DX11_PixelShader_Constants init_cbuffer =
+          {
+            .eye_p_in_world = gwl->world_camera.p,
+            .light = gwl->light,
+          };
+
+          init_cbuffer.z_far = gwl->light_camera.z_far;
+          
+          ID3D11DeviceContext_Map(state->device_context, (ID3D11Resource *)state->cbuffers[R_CBufferType_Game_PShader0], 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped_subrec);
+          CopyMemory(mapped_subrec.pData, &init_cbuffer, mapped_subrec.RowPitch);
+          ID3D11DeviceContext_Unmap(state->device_context, (ID3D11Resource *)state->cbuffers[R_CBufferType_Game_PShader0], 0);
+        }        
+        
+        ID3D11DeviceContext_IASetPrimitiveTopology(state->device_context, D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+        UINT offset = 0;
+        ID3D11DeviceContext_IASetVertexBuffers(state->device_context, 0, 1, &state->cube_model.vertices, &state->cube_model.struct_size, &offset);
+        ID3D11DeviceContext_IASetIndexBuffer(state->device_context, state->cube_model.indices, DXGI_FORMAT_R32_UINT, 0);
+        ID3D11DeviceContext_IASetInputLayout(state->device_context, state->input_layouts[R_InputLayoutType_Game]);
+        
+        ID3D11DeviceContext_VSSetShader(state->device_context, state->vshaders[R_VShaderType_GameCubeShadows], null, 0);
+        ID3D11DeviceContext_VSSetConstantBuffers(state->device_context, 0, 1, &state->cbuffers[R_CBufferType_Game_VShader0]);
+        ID3D11DeviceContext_VSSetShaderResources(state->device_context, 0, 1, &state->sbuffer_srvs[R_SBufferType_Game]);
+        
+        ID3D11DeviceContext_PSSetConstantBuffers(state->device_context, 1, 1, &state->cbuffers[R_CBufferType_Game_PShader0]);
+        ID3D11DeviceContext_PSSetShader(state->device_context, state->pshaders[R_PShaderType_GameCubeShadows], null, 0);
+        
+        ID3D11DeviceContext_RSSetViewports(state->device_context, 1, &state->shadow_cubemap_vp);
+        ID3D11DeviceContext_RSSetState(state->device_context, state->raster_fill_cull_ccw);
+        
+        ID3D11DeviceContext_OMSetDepthStencilState(state->device_context, state->ds_depth_only, 0);
+        
+        v3f up_vects_and_lookats[] = {
+          v3f_make(0.0f, 1.0f, 0.0f), // D3D11_TEXTURECUBE_FACE_POSITIVE_X
+          v3f_make(1.0f, 0.0f, 0.0f), // LookDir
+          
+          v3f_make(0.0f, 1.0f, 0.0f), // D3D11_TEXTURECUBE_FACE_NEGATIVE_X
+          v3f_make(-1.0f, 0.0f, 0.0f), // LookDir
+          
+          v3f_make(0.0f, 0.0f, 1.0f), // D3D11_TEXTURECUBE_FACE_POSITIVE_Y
+          v3f_make(0.0f, 1.0f, 0.0f), // LookDir
+          
+          v3f_make(0.0f, 0.0f, 1.0f), // D3D11_TEXTURECUBE_FACE_NEGATIVE_Y
+          v3f_make(0.0f, -1.0f, 0.0f), // LookDir
+          
+          v3f_make(0.0f, 1.0f, 0.0f), // D3D11_TEXTURECUBE_FACE_POSITIVE_Z
+          v3f_make(0.0f, 0.0f, 1.0f), // LookDir
+          
+          v3f_make(0.0f, 1.0f, 0.0f), // D3D11_TEXTURECUBE_FACE_NEGATIVE_Z
+          v3f_make(0.0f, 0.0f, -1.0f), // LookDir
+        };
+
+        m44 light_projection;
+        r_get_projection_and_camera_matrices(gwl->light_camera, &light_projection, 0);
+
+        for (u32 i = 0; i < 6; ++i)
+        {
+          v3f light_p = gwl->light.p;
+          v3f light_dir = up_vects_and_lookats[i * 2 + 1];
+          v3f temp_up = up_vects_and_lookats[i * 2];
+
+          m44 world_to_light = m44_look_at_dir(light_p, temp_up, light_dir);
+
+          
+          DX11_VertexShader_Constants init_cbuffer =
+          {
+            light_projection, world_to_light,
+          };
+          
+          ID3D11DeviceContext_Map(state->device_context, (ID3D11Resource *)state->cbuffers[R_CBufferType_Game_VShader0], 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped_subrec);
+          CopyMemory(mapped_subrec.pData, &init_cbuffer, mapped_subrec.RowPitch);
+          ID3D11DeviceContext_Unmap(state->device_context, (ID3D11Resource *)state->cbuffers[R_CBufferType_Game_VShader0], 0);
+        
+          ID3D11DeviceContext_ClearDepthStencilView(state->device_context, state->shadow_cubemap_dsv[i], D3D11_CLEAR_DEPTH, 1.0f, 0);
+          ID3D11DeviceContext_OMSetRenderTargets(state->device_context, 0, null, state->shadow_cubemap_dsv[i]);
           ID3D11DeviceContext_DrawIndexedInstanced(state->device_context,
                                                    state->cube_model.indices_count,
                                                    (UINT)state->instances_count,
@@ -1546,7 +1711,7 @@ function R_Light *
 r_game_add_point_light(R_Pass *pass, v3f p, v4f colour)
 {
   Assert((pass->type == R_PassType_Game) ||
-         (pass->type == R_PassType_Game_Shadow));
+         (pass->type == R_PassType_Game_ShadowCube));
   
   R_Pass_Game *g = &(pass->game);
   
@@ -1577,6 +1742,14 @@ function R_Pass *
 r_acquire_game_shadow_pass(R_State *state, R_CameraConfig light_camera)
 {
   R_Pass *result = r_acquire_pass(state, R_PassType_Game_Shadow);
+  result->game.light_camera = light_camera;
+  return(result);
+}
+
+function R_Pass *
+r_acquire_game_shadowcube_pass(R_State *state, R_CameraConfig light_camera)
+{
+  R_Pass *result = r_acquire_pass(state, R_PassType_Game_ShadowCube);
   result->game.light_camera = light_camera;
   return(result);
 }

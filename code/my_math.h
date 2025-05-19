@@ -87,6 +87,7 @@ typedef union
 // to x, y, z limits to [-1,1], [-1,1], [0, 1], respectively.
 inline function m44 m44_perspective_dx11(f32 height_over_width_aspect, f32 fov_rad, f32 z_near, f32 z_far);
 inline function m44 m44_identity(void);
+inline function m44 m44_look_at_dir(v3f look_from, v3f up_v, v3f look_at_dir);
 
 typedef struct
 {
