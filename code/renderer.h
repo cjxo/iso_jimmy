@@ -50,7 +50,7 @@ typedef struct
   u32 type;
   v4f colour;
   v3f dir;
-  f32 pad_a[1];
+  f32 z_far;
 } R_Light;
 
 typedef struct
@@ -66,7 +66,6 @@ enum
 {
   R_PassType_Game,
   R_PassType_Game_Shadow,
-  R_PassType_Game_ShadowCube,
   R_PassType_Game_SSAO,
   R_PassType_UI,
   R_PassType_Count,
@@ -82,13 +81,12 @@ typedef struct
   f32 aspect_height_over_width;
   f32 left, right, bottom, top;
   f32 fov_rad;
-  v3f world_vect_x, world_vect_y, world_vect_z;
+  v3f look_at;
 } R_CameraConfig;
 
 typedef struct
 {  
-  R_Light light;
-  R_CameraConfig world_camera, light_camera;
+  R_CameraConfig world_camera;
   b32 wire_frame;
 } R_Pass_Game;
 
@@ -250,6 +248,8 @@ typedef struct
   HFONT font_handle;
   R_Font font;
   
+  R_CameraConfig light_camera;
+  R_Light light;
   R_Model_Instance *instances;
   u64 instances_count;
   R_Pass *first_pass, *last_pass;
@@ -260,12 +260,13 @@ function void r_submit(R_State *state);
 
 function R_Pass *r_acquire_pass(R_State *state, R_PassType type);
 
-function R_Pass *r_acquire_game_pass(R_State *state, R_CameraConfig world_camera, R_CameraConfig light_camera, b32 wire_frame);
+function R_Pass *r_acquire_game_pass(R_State *state, R_CameraConfig world_camera, b32 wire_frame);
 function R_Pass *r_acquire_ssao_pass(R_State *state, R_CameraConfig world_camera);
-function R_Pass *r_acquire_game_shadow_pass(R_State *state, R_CameraConfig light_camera);
-function R_Pass *r_acquire_game_shadowcube_pass(R_State *state, R_CameraConfig light_camera);
+function R_Pass *r_acquire_game_shadow_pass(R_State *state);
 
-function R_Model_Instance *r_game_add_plane(R_State *state, v3f p, v3f scale, v3f rotation, v4f colour);
+function R_Model_Instance *r_add_plane(R_State *state, v3f p, v3f scale, v3f rotation, v4f colour);
+function R_Light          *r_set_directional_light(R_State *state, v3f p, v3f dir, v4f colour);
+function R_Light          *r_set_point_light(R_State *state, v3f p, v4f colour);
 
 inline function R_Pass *r_acquire_ui_pass(R_State *state);
 inline function R_UI_Rect *r_ui_acquire_rect(R_Pass *pass);

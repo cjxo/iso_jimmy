@@ -401,37 +401,37 @@ game_add_cube(R_State *state, b32 left_block_active, b32 right_block_active, b32
   // front face;
   if (!back_block_active)
   {
-    r_game_add_plane(state, p, scale, v3f_make(0.0f, 0.0f, 0.0f), colour);
+    r_add_plane(state, p, scale, v3f_make(0.0f, 0.0f, 0.0f), colour);
   }
 
   // right face;
   if (!right_block_active)
   {
-    r_game_add_plane(state, p, scale, v3f_make(0.0f, 0.0f, DegToRad(90)), colour);
+    r_add_plane(state, p, scale, v3f_make(0.0f, 0.0f, DegToRad(90)), colour);
   }
 
   // back face;
   if (!front_block_active)
   {
-    r_game_add_plane(state, p, scale, v3f_make(0.0f, 0.0f, DegToRad(180)), colour);
+    r_add_plane(state, p, scale, v3f_make(0.0f, 0.0f, DegToRad(180)), colour);
   }
 
   // left face;
   if (!left_block_active)
   {
-    r_game_add_plane(state, p, scale, v3f_make(0.0f, 0.0f, DegToRad(270)), colour);
+    r_add_plane(state, p, scale, v3f_make(0.0f, 0.0f, DegToRad(270)), colour);
   }
 
   // top face
   if (!top_block_active)
   {
-    r_game_add_plane(state, p, scale, v3f_make(DegToRad(90), 0.0f, 0.0f), colour);
+    r_add_plane(state, p, scale, v3f_make(DegToRad(90), 0.0f, 0.0f), colour);
   }
 
   // bottom face
   if (!bottom_block_active)
   {
-    r_game_add_plane(state, p, scale, v3f_make(DegToRad(-90), 0.0f, 0.0f), colour);
+    r_add_plane(state, p, scale, v3f_make(DegToRad(-90), 0.0f, 0.0f), colour);
   }
 }
 
@@ -556,44 +556,6 @@ game_draw(G_State *game, R_State *state)
 }
 
 function R_CameraConfig
-create_orthographic_camera(f32 left, f32 right, f32 bottom, f32 top, 
-                           f32 z_near, f32 z_far, v3f world_p,
-                           v3f right_in_world, v3f up_in_world, v3f front_in_world)
-{
-  R_CameraConfig result;
-  result.is_ortho = true;
-  result.p = world_p;
-  result.z_near = z_near;
-  result.z_far = z_far;
-  result.aspect_height_over_width = 1;
-  result.left = left;
-  result.right = right;
-  result.bottom = bottom;
-  result.top = top;
-  result.fov_rad = DegToRad(90);
-  result.world_vect_x = right_in_world;
-  result.world_vect_y = up_in_world;
-  result.world_vect_z = front_in_world;
-  return(result);
-}
-
-function R_CameraConfig
-create_perspective_camera(v3f p, f32 z_near, f32 z_far, f32 aspect_height_over_width, f32 fov_rad, v3f x, v3f y, v3f z)
-{
-  R_CameraConfig result;
-  result.is_ortho = false;
-  result.p = p;
-  result.z_near = z_near;
-  result.z_far = z_far;
-  result.aspect_height_over_width = aspect_height_over_width;
-  result.fov_rad = fov_rad;
-  result.world_vect_x = x;
-  result.world_vect_y = y;
-  result.world_vect_z = z;
-  return(result);
-}
-
-function R_CameraConfig
 camera_config_from_game_camera(G_Camera camera)
 {
   R_CameraConfig result;
@@ -603,9 +565,7 @@ camera_config_from_game_camera(G_Camera camera)
   result.z_far = camera.far_z;
   result.aspect_height_over_width = camera.aspect;
   result.fov_rad = camera.fov_rad;
-  result.world_vect_x = camera.x;
-  result.world_vect_y = camera.y;
-  result.world_vect_z = camera.z;
+  result.look_at = camera.z;
   return(result);
 }
 
@@ -701,37 +661,22 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PSTR lpCmd, int nShowCmd)
     g_update_camera(&game_state.camera, window, input, game_state.player_p, seconds_per_frame);
     
     //v3f light_p = v3f_make(game_state.player_p.x, game_state.player_p.y + 20, game_state.player_p.z - 20);
-    // v3f light_p = v3f_make(20, G_ChunkDims_Y + 20, -20);
+    //v3f light_p = v3f_make(20, G_ChunkDims_Y + 20, -20);
     v3f light_p = v3f_make(20, G_ChunkDims_Y + 4, 15);
-    // v3f light_dir = v3f_make(0.5f, -1.0f, 1.0f);
-    v3f light_dir = v3f_make(0.0f, -1.0f, 0.0f);
-    // v4f light_intensity = v4f_make(0.7f, 0.7f, 0.7f, 1.0f);
+    //v3f light_dir = v3f_make(0.0f, -1.0f, 1.0f);
+    //v3f light_dir = v3f_make(0.0f, -1.0f, 0.0f);
+    //v4f light_intensity = v4f_make(0.7f, 0.7f, 0.7f, 1.0f);
     v4f light_intensity = v4f_make(4.f, 4.f, 4.f, 1.0f);
-    v3f temp_up = v3f_make(0, 0, 1);
 
-    f32 scaling = v3f_dot(temp_up, light_dir) / v3f_dot(light_dir, light_dir);
-    v3f up = v3f_sub(temp_up, v3f_scale(scaling, light_dir));
-    v3f right = v3f_normalize_or_zero(v3f_cross(up, light_dir));
-    up = v3f_normalize_or_zero(up);
-    light_dir = v3f_normalize_or_zero(light_dir);
-    
     game_draw(&game_state, &renderer_state);
 
-    // R_CameraConfig smap_camera = create_orthographic_camera(-50, 50, -50, 50, 0.0f, 500.0f, light_p, right, up, light_dir);
-    R_CameraConfig smap_camera = create_perspective_camera(light_p, 1.0f, 25.0f, 1, DegToRad(90), right, up, light_dir);
     R_CameraConfig game_camera = camera_config_from_game_camera(game_state.camera);
 
-    // R_Pass *shadow_pass = r_acquire_game_shadow_pass(&renderer_state, smap_camera);
-    R_Pass *shadow_pass = r_acquire_game_shadowcube_pass(&renderer_state, smap_camera);
-    // r_game_add_directional_light(shadow_pass, light_p, light_dir, light_intensity);
-    r_game_add_point_light(shadow_pass, light_p, light_intensity);
-
+    //r_set_directional_light(&renderer_state, light_p, light_dir, light_intensity);
+    r_set_point_light(&renderer_state, light_p, light_intensity);
+    r_acquire_game_shadow_pass(&renderer_state);
     r_acquire_ssao_pass(&renderer_state, game_camera);
-    //r_acquire_ssao_blur_pass(&renderer_state);
-
-    R_Pass *light_pass = r_acquire_game_pass(&renderer_state, game_camera, smap_camera, game_state.debug_wire_frame);
-    // r_game_add_directional_light(light_pass, light_p, light_dir, light_intensity);
-    r_game_add_point_light(light_pass, light_p, light_intensity);
+    r_acquire_game_pass(&renderer_state, game_camera, game_state.debug_wire_frame);
     
     R_Pass *ui_pass = r_acquire_ui_pass(&renderer_state);
     r_ui_textf(ui_pass, v2f_make(0, 0), v4f_make(1,0,1,1), str8("----------------------------- DEBUG -----------------------------"));

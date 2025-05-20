@@ -7,7 +7,7 @@ struct Light
 	uint type;
 	float4 colour;
 	float3 dir;
-	float pad_a[1];
+	float z_far;
 };
 
 cbuffer VertexShader_Constants : register(b0)
@@ -22,7 +22,7 @@ cbuffer PixelShader_Constants : register(b1)
 {
 	Light g_light;
 	float3 g_eye_p_in_world;
-	float g_light_z_far;
+	float g_cb1_pad_a[1];
 };
 
 struct Vertex
@@ -167,8 +167,10 @@ float4 ps_main(VS_Output ps_inp) : SV_Target
 			{
 				float3 to_hit = ps_inp.world_p - g_light.p;
 				float to_hit_len = length(to_hit);
-				float depth = g_shadow_cubemap.Sample(g_shadow_map_sampler, to_hit) * 25.0f;
-				shadow_multiplier = (to_hit_len - 0.05f < depth) ? 1.0f : 0.2f;
+				to_hit /= to_hit_len;
+				float depth = g_shadow_cubemap.Sample(g_shadow_map_sampler, to_hit) * g_light.z_far;
+				float bias = 0.05 * (to_hit_len * 0.075f) + max(0.05 * (1.0 - dot(N, -to_hit)), 0.005);
+				shadow_multiplier = (to_hit_len - bias < depth) ? 1.0f : 0.2f;
 			}
 			else
 			{
@@ -206,8 +208,8 @@ float4 ps_main(VS_Output ps_inp) : SV_Target
 			float atten = win*(r0*r0 / (L_d*L_d*0.5f + L_d*4+ 1));
 
 			float N_dot_L = max(dot(N, L), 0);
-			//float R_dot_V = max(dot(normalize(L + V), N), 0);
-			float R_dot_V = max(dot(R, V), 0);
+			float R_dot_V = max(dot(normalize(L + V), N), 0);
+			//float R_dot_V = max(dot(R, V), 0);
 			float4 specular = M_specular * pow(R_dot_V, M_shininess) * light.colour;
 			float4 diffuse = M_diffuse * N_dot_L * light.colour * ps_inp.colour;
 			c_accum = saturate((diffuse + specular)*atten*shadow_multiplier + c_accum);
@@ -275,5 +277,5 @@ VS_Omnidirectional_Output vs_omnidirectional_shadow(Vertex vertex, uint iid : SV
 float ps_omnidirectional_shadow(VS_Omnidirectional_Output ps_inp) : SV_Depth
 {
 	float dist = length(g_light.p - ps_inp.pos);
-	return dist / 25;
+	return dist / g_light.z_far;
 }

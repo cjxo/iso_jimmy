@@ -1259,13 +1259,7 @@ r_get_projection_and_camera_matrices(R_CameraConfig camera_config, m44 *projecti
 
   if (camera)
   {
-    *camera = (m44)
-              {
-                camera_config.world_vect_x.x, camera_config.world_vect_x.y, camera_config.world_vect_x.z, -v3f_dot(camera_config.p, camera_config.world_vect_x),
-                camera_config.world_vect_y.x, camera_config.world_vect_y.y, camera_config.world_vect_y.z, -v3f_dot(camera_config.p, camera_config.world_vect_y),
-                camera_config.world_vect_z.x, camera_config.world_vect_z.y, camera_config.world_vect_z.z, -v3f_dot(camera_config.p, camera_config.world_vect_z),
-                0.0f, 0.0f, 0.0f, 1.0f,
-              };
+    *camera = m44_look_at_dir(camera_config.p, v3f_make(0, 1, 0), camera_config.look_at);
   }
 }
 
@@ -1310,7 +1304,7 @@ r_submit(R_State *state)
         R_Pass_Game *gwl = &pass->game;
         m44 projection, world_to_camera, light_projection, world_to_light;
         r_get_projection_and_camera_matrices(gwl->world_camera, &projection, &world_to_camera);
-        r_get_projection_and_camera_matrices(gwl->light_camera, &light_projection, &world_to_light);
+        r_get_projection_and_camera_matrices(state->light_camera, &light_projection, &world_to_light);
 
         ID3D11DeviceContext_ClearDepthStencilView(state->device_context, state->main_dsv, D3D11_CLEAR_DEPTH, 1.0f, 0);
         
@@ -1330,7 +1324,7 @@ r_submit(R_State *state)
           DX11_PixelShader_Constants init_cbuffer =
           {
             .eye_p_in_world = gwl->world_camera.p,
-            .light = gwl->light,
+            .light = state->light,
           };
           
           ID3D11DeviceContext_Map(state->device_context, (ID3D11Resource *)state->cbuffers[R_CBufferType_Game_PShader0], 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped_subrec);
@@ -1492,22 +1486,7 @@ r_submit(R_State *state)
       case R_PassType_Game_Shadow:
       {
         R_Pass_Game *gwl = &pass->game;
-        m44 light_projection, world_to_light;
-        r_get_projection_and_camera_matrices(gwl->light_camera, &light_projection, &world_to_light);
-        
-        ID3D11DeviceContext_ClearDepthStencilView(state->device_context, state->shadow_map_dsv, D3D11_CLEAR_DEPTH, 1.0f, 0);
-        
-        {
-          DX11_VertexShader_Constants init_cbuffer =
-          {
-            light_projection, world_to_light,
-          };
-
-          
-          ID3D11DeviceContext_Map(state->device_context, (ID3D11Resource *)state->cbuffers[R_CBufferType_Game_VShader0], 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped_subrec);
-          CopyMemory(mapped_subrec.pData, &init_cbuffer, mapped_subrec.RowPitch);
-          ID3D11DeviceContext_Unmap(state->device_context, (ID3D11Resource *)state->cbuffers[R_CBufferType_Game_VShader0], 0);
-        }
+        R_Light light = state->light;
         
         ID3D11DeviceContext_IASetPrimitiveTopology(state->device_context, D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
         UINT offset = 0;
@@ -1515,114 +1494,113 @@ r_submit(R_State *state)
         ID3D11DeviceContext_IASetIndexBuffer(state->device_context, state->cube_model.indices, DXGI_FORMAT_R32_UINT, 0);
         ID3D11DeviceContext_IASetInputLayout(state->device_context, state->input_layouts[R_InputLayoutType_Game]);
         
-        ID3D11DeviceContext_VSSetShader(state->device_context, state->vshaders[R_VShaderType_GameShadows], null, 0);
         ID3D11DeviceContext_VSSetConstantBuffers(state->device_context, 0, 1, &state->cbuffers[R_CBufferType_Game_VShader0]);
         ID3D11DeviceContext_VSSetShaderResources(state->device_context, 0, 1, &state->sbuffer_srvs[R_SBufferType_Game]);
         
-        ID3D11DeviceContext_PSSetShader(state->device_context, null, null, 0);
-        
-        ID3D11DeviceContext_RSSetViewports(state->device_context, 1, &state->shadow_map_vp);
-        ID3D11DeviceContext_RSSetState(state->device_context, state->shadow_map_raster);
-        
         ID3D11DeviceContext_OMSetDepthStencilState(state->device_context, state->ds_depth_only, 0);
-        ID3D11DeviceContext_OMSetRenderTargets(state->device_context, 0, null, state->shadow_map_dsv);
         
-        // NOTE(cj): Cube instance
-        //if (gwl->instances_count)
+        switch (light.type)
         {
-          ID3D11DeviceContext_DrawIndexedInstanced(state->device_context,
-                                                   state->cube_model.indices_count,
-                                                   (UINT)state->instances_count,
-                                                   0, 0, 0);
+          case R_LightType_DirectionalLight:
+          {
+            m44 light_projection, world_to_light;
+            r_get_projection_and_camera_matrices(state->light_camera, &light_projection, &world_to_light);
+            
+            DX11_VertexShader_Constants init_cbuffer =
+            {
+              light_projection, world_to_light,
+            };
+
+            ID3D11DeviceContext_Map(state->device_context, (ID3D11Resource *)state->cbuffers[R_CBufferType_Game_VShader0], 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped_subrec);
+            CopyMemory(mapped_subrec.pData, &init_cbuffer, mapped_subrec.RowPitch);
+            ID3D11DeviceContext_Unmap(state->device_context, (ID3D11Resource *)state->cbuffers[R_CBufferType_Game_VShader0], 0);
+
+            ID3D11DeviceContext_VSSetShader(state->device_context, state->vshaders[R_VShaderType_GameShadows], null, 0);
+            ID3D11DeviceContext_RSSetViewports(state->device_context, 1, &state->shadow_map_vp);
+            ID3D11DeviceContext_RSSetState(state->device_context, state->shadow_map_raster);
+            ID3D11DeviceContext_PSSetShader(state->device_context, null, null, 0);
+            ID3D11DeviceContext_ClearDepthStencilView(state->device_context, state->shadow_map_dsv, D3D11_CLEAR_DEPTH, 1.0f, 0);
+            ID3D11DeviceContext_OMSetRenderTargets(state->device_context, 0, null, state->shadow_map_dsv);
+
+            ID3D11DeviceContext_DrawIndexedInstanced(state->device_context,
+                                                     state->cube_model.indices_count,
+                                                     (UINT)state->instances_count,
+                                                     0, 0, 0);
+          } break;
+
+          case R_LightType_PointLight:
+          {
+            {
+              DX11_PixelShader_Constants init_cbuffer =
+              {
+                .eye_p_in_world = gwl->world_camera.p,
+                .light = state->light,
+              };
+              
+              ID3D11DeviceContext_Map(state->device_context, (ID3D11Resource *)state->cbuffers[R_CBufferType_Game_PShader0], 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped_subrec);
+              CopyMemory(mapped_subrec.pData, &init_cbuffer, mapped_subrec.RowPitch);
+              ID3D11DeviceContext_Unmap(state->device_context, (ID3D11Resource *)state->cbuffers[R_CBufferType_Game_PShader0], 0);
+            }
+
+            ID3D11DeviceContext_VSSetShader(state->device_context, state->vshaders[R_VShaderType_GameCubeShadows], null, 0);
+            ID3D11DeviceContext_RSSetState(state->device_context, state->raster_fill_cull_ccw);
+            ID3D11DeviceContext_RSSetViewports(state->device_context, 1, &state->shadow_cubemap_vp);
+            ID3D11DeviceContext_PSSetShader(state->device_context, state->pshaders[R_PShaderType_GameCubeShadows], null, 0);
+            ID3D11DeviceContext_PSSetConstantBuffers(state->device_context, 1, 1, &state->cbuffers[R_CBufferType_Game_PShader0]);
+
+            v3f up_vects_and_lookats[] = {
+              v3f_make(0.0f, 1.0f, 0.0f), // D3D11_TEXTURECUBE_FACE_POSITIVE_X
+              v3f_make(1.0f, 0.0f, 0.0f), // LookDir
+              
+              v3f_make(0.0f, 1.0f, 0.0f), // D3D11_TEXTURECUBE_FACE_NEGATIVE_X
+              v3f_make(-1.0f, 0.0f, 0.0f), // LookDir
+              
+              v3f_make(0.0f, 0.0f, 1.0f), // D3D11_TEXTURECUBE_FACE_POSITIVE_Y
+              v3f_make(0.0f, 1.0f, 0.0f), // LookDir
+              
+              v3f_make(0.0f, 0.0f, 1.0f), // D3D11_TEXTURECUBE_FACE_NEGATIVE_Y
+              v3f_make(0.0f, -1.0f, 0.0f), // LookDir
+              
+              v3f_make(0.0f, 1.0f, 0.0f), // D3D11_TEXTURECUBE_FACE_POSITIVE_Z
+              v3f_make(0.0f, 0.0f, 1.0f), // LookDir
+              
+              v3f_make(0.0f, 1.0f, 0.0f), // D3D11_TEXTURECUBE_FACE_NEGATIVE_Z
+              v3f_make(0.0f, 0.0f, -1.0f), // LookDir
+            };
+
+            m44 light_projection;
+            r_get_projection_and_camera_matrices(state->light_camera, &light_projection, 0);
+
+            for (u32 i = 0; i < 6; ++i)
+            {
+              v3f light_p = light.p;
+              v3f light_dir = up_vects_and_lookats[i * 2 + 1];
+              v3f temp_up = up_vects_and_lookats[i * 2];
+
+              m44 world_to_light = m44_look_at_dir(light_p, temp_up, light_dir);
+              
+              DX11_VertexShader_Constants init_cbuffer =
+              {
+                light_projection, world_to_light,
+              };
+              
+              ID3D11DeviceContext_Map(state->device_context, (ID3D11Resource *)state->cbuffers[R_CBufferType_Game_VShader0], 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped_subrec);
+              CopyMemory(mapped_subrec.pData, &init_cbuffer, mapped_subrec.RowPitch);
+              ID3D11DeviceContext_Unmap(state->device_context, (ID3D11Resource *)state->cbuffers[R_CBufferType_Game_VShader0], 0);
+            
+              ID3D11DeviceContext_ClearDepthStencilView(state->device_context, state->shadow_cubemap_dsv[i], D3D11_CLEAR_DEPTH, 1.0f, 0);
+              ID3D11DeviceContext_OMSetRenderTargets(state->device_context, 0, null, state->shadow_cubemap_dsv[i]);
+              ID3D11DeviceContext_DrawIndexedInstanced(state->device_context,
+                                                       state->cube_model.indices_count,
+                                                       (UINT)state->instances_count,
+                                                       0, 0, 0);
+            }
+          } break;
+
+          InvalidDefaultCase;
         }
       } break;
 
-      case R_PassType_Game_ShadowCube:
-      {
-        R_Pass_Game *gwl = &pass->game;
-
-        {
-          DX11_PixelShader_Constants init_cbuffer =
-          {
-            .eye_p_in_world = gwl->world_camera.p,
-            .light = gwl->light,
-          };
-
-          init_cbuffer.z_far = gwl->light_camera.z_far;
-          
-          ID3D11DeviceContext_Map(state->device_context, (ID3D11Resource *)state->cbuffers[R_CBufferType_Game_PShader0], 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped_subrec);
-          CopyMemory(mapped_subrec.pData, &init_cbuffer, mapped_subrec.RowPitch);
-          ID3D11DeviceContext_Unmap(state->device_context, (ID3D11Resource *)state->cbuffers[R_CBufferType_Game_PShader0], 0);
-        }        
-        
-        ID3D11DeviceContext_IASetPrimitiveTopology(state->device_context, D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-        UINT offset = 0;
-        ID3D11DeviceContext_IASetVertexBuffers(state->device_context, 0, 1, &state->cube_model.vertices, &state->cube_model.struct_size, &offset);
-        ID3D11DeviceContext_IASetIndexBuffer(state->device_context, state->cube_model.indices, DXGI_FORMAT_R32_UINT, 0);
-        ID3D11DeviceContext_IASetInputLayout(state->device_context, state->input_layouts[R_InputLayoutType_Game]);
-        
-        ID3D11DeviceContext_VSSetShader(state->device_context, state->vshaders[R_VShaderType_GameCubeShadows], null, 0);
-        ID3D11DeviceContext_VSSetConstantBuffers(state->device_context, 0, 1, &state->cbuffers[R_CBufferType_Game_VShader0]);
-        ID3D11DeviceContext_VSSetShaderResources(state->device_context, 0, 1, &state->sbuffer_srvs[R_SBufferType_Game]);
-        
-        ID3D11DeviceContext_PSSetConstantBuffers(state->device_context, 1, 1, &state->cbuffers[R_CBufferType_Game_PShader0]);
-        ID3D11DeviceContext_PSSetShader(state->device_context, state->pshaders[R_PShaderType_GameCubeShadows], null, 0);
-        
-        ID3D11DeviceContext_RSSetViewports(state->device_context, 1, &state->shadow_cubemap_vp);
-        ID3D11DeviceContext_RSSetState(state->device_context, state->raster_fill_cull_ccw);
-        
-        ID3D11DeviceContext_OMSetDepthStencilState(state->device_context, state->ds_depth_only, 0);
-        
-        v3f up_vects_and_lookats[] = {
-          v3f_make(0.0f, 1.0f, 0.0f), // D3D11_TEXTURECUBE_FACE_POSITIVE_X
-          v3f_make(1.0f, 0.0f, 0.0f), // LookDir
-          
-          v3f_make(0.0f, 1.0f, 0.0f), // D3D11_TEXTURECUBE_FACE_NEGATIVE_X
-          v3f_make(-1.0f, 0.0f, 0.0f), // LookDir
-          
-          v3f_make(0.0f, 0.0f, 1.0f), // D3D11_TEXTURECUBE_FACE_POSITIVE_Y
-          v3f_make(0.0f, 1.0f, 0.0f), // LookDir
-          
-          v3f_make(0.0f, 0.0f, 1.0f), // D3D11_TEXTURECUBE_FACE_NEGATIVE_Y
-          v3f_make(0.0f, -1.0f, 0.0f), // LookDir
-          
-          v3f_make(0.0f, 1.0f, 0.0f), // D3D11_TEXTURECUBE_FACE_POSITIVE_Z
-          v3f_make(0.0f, 0.0f, 1.0f), // LookDir
-          
-          v3f_make(0.0f, 1.0f, 0.0f), // D3D11_TEXTURECUBE_FACE_NEGATIVE_Z
-          v3f_make(0.0f, 0.0f, -1.0f), // LookDir
-        };
-
-        m44 light_projection;
-        r_get_projection_and_camera_matrices(gwl->light_camera, &light_projection, 0);
-
-        for (u32 i = 0; i < 6; ++i)
-        {
-          v3f light_p = gwl->light.p;
-          v3f light_dir = up_vects_and_lookats[i * 2 + 1];
-          v3f temp_up = up_vects_and_lookats[i * 2];
-
-          m44 world_to_light = m44_look_at_dir(light_p, temp_up, light_dir);
-
-          
-          DX11_VertexShader_Constants init_cbuffer =
-          {
-            light_projection, world_to_light,
-          };
-          
-          ID3D11DeviceContext_Map(state->device_context, (ID3D11Resource *)state->cbuffers[R_CBufferType_Game_VShader0], 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped_subrec);
-          CopyMemory(mapped_subrec.pData, &init_cbuffer, mapped_subrec.RowPitch);
-          ID3D11DeviceContext_Unmap(state->device_context, (ID3D11Resource *)state->cbuffers[R_CBufferType_Game_VShader0], 0);
-        
-          ID3D11DeviceContext_ClearDepthStencilView(state->device_context, state->shadow_cubemap_dsv[i], D3D11_CLEAR_DEPTH, 1.0f, 0);
-          ID3D11DeviceContext_OMSetRenderTargets(state->device_context, 0, null, state->shadow_cubemap_dsv[i]);
-          ID3D11DeviceContext_DrawIndexedInstanced(state->device_context,
-                                                   state->cube_model.indices_count,
-                                                   (UINT)state->instances_count,
-                                                   0, 0, 0);
-        }
-      } break;
-      
       case R_PassType_UI:
       {
         R_Pass_UI *ui = &pass->ui;
@@ -1690,11 +1668,10 @@ r_acquire_pass(R_State *state, R_PassType type)
 }
 
 function R_Pass *
-r_acquire_game_pass(R_State *state, R_CameraConfig world_camera, R_CameraConfig light_camera, b32 wire_frame)
+r_acquire_game_pass(R_State *state, R_CameraConfig world_camera, b32 wire_frame)
 {
   R_Pass *result = r_acquire_pass(state, R_PassType_Game);
   result->game.world_camera = world_camera;
-  result->game.light_camera = light_camera;
   result->game.wire_frame = wire_frame;
   return(result);
 }
@@ -1708,54 +1685,59 @@ r_acquire_ssao_pass(R_State *state, R_CameraConfig world_camera)
 }
 
 function R_Light *
-r_game_add_point_light(R_Pass *pass, v3f p, v4f colour)
-{
-  Assert((pass->type == R_PassType_Game) ||
-         (pass->type == R_PassType_Game_ShadowCube));
-  
-  R_Pass_Game *g = &(pass->game);
-  
-  R_Light *result = &g->light;
+r_set_point_light(R_State *state, v3f p, v4f colour)
+{ 
+  R_Light *result = &state->light;
   result->p = p;
   result->type = R_LightType_PointLight;
   result->colour = colour;
+  result->z_far = 50.0f;
+
+  state->light_camera.is_ortho = false;
+  state->light_camera.p = p;
+  state->light_camera.z_near = 1.0f;
+  state->light_camera.z_far = result->z_far;
+  state->light_camera.aspect_height_over_width = 1.0f;
+  state->light_camera.fov_rad = DegToRad(90);
   return(result);
 }
 
 function R_Light *
-r_game_add_directional_light(R_Pass *pass, v3f p, v3f dir, v4f colour)
-{
-  Assert((pass->type == R_PassType_Game) ||
-         (pass->type == R_PassType_Game_Shadow));
-  
-  R_Pass_Game *g = &(pass->game);
-  
-  R_Light *result = &g->light;
+r_set_directional_light(R_State *state, v3f p, v3f dir, v4f colour)
+{ 
+  R_Light *result = &state->light;
   result->dir = dir;
   result->type = R_LightType_DirectionalLight;
   result->colour = colour;
   result->p = p;
+  result->z_far = 500.0f;
+
+  state->light_camera.is_ortho = true;
+  state->light_camera.p = p;
+  state->light_camera.z_near = 0.0f;
+  state->light_camera.z_far = result->z_far;
+  state->light_camera.aspect_height_over_width = 1;
+  state->light_camera.left = -50.0f;
+  state->light_camera.right = 50.0f;
+  state->light_camera.bottom = -50.0f;
+  state->light_camera.top = 50.0f;
+  state->light_camera.fov_rad = DegToRad(90);
+  state->light_camera.look_at = dir;
+  //state->light_camera.world_vect_x = right_in_world;
+  //state->light_camera.world_vect_y = up_in_world;
+  //state->light_camera.world_vect_z = front_in_world;
   return(result);
 }
 
 function R_Pass *
-r_acquire_game_shadow_pass(R_State *state, R_CameraConfig light_camera)
+r_acquire_game_shadow_pass(R_State *state)
 {
   R_Pass *result = r_acquire_pass(state, R_PassType_Game_Shadow);
-  result->game.light_camera = light_camera;
-  return(result);
-}
-
-function R_Pass *
-r_acquire_game_shadowcube_pass(R_State *state, R_CameraConfig light_camera)
-{
-  R_Pass *result = r_acquire_pass(state, R_PassType_Game_ShadowCube);
-  result->game.light_camera = light_camera;
   return(result);
 }
 
 function R_Model_Instance *
-r_game_add_plane(R_State *state, v3f p, v3f scale, v3f rotation, v4f colour)
+r_add_plane(R_State *state, v3f p, v3f scale, v3f rotation, v4f colour)
 {
   //Assert((pass->type == R_PassType_Game) || (pass->type == R_PassType_Game_Shadow));
   
