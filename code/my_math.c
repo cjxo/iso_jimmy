@@ -207,9 +207,9 @@ m44_look_at_dir(v3f look_from, v3f temp_up, v3f look_at_dir)
 {
   f32 scaling = v3f_dot(temp_up, look_at_dir) / v3f_dot(look_at_dir, look_at_dir);
   v3f up = v3f_sub(temp_up, v3f_scale(scaling, look_at_dir));
-  v3f right = v3f_normalize_or_zero(v3f_cross(up, look_at_dir));
-  up = v3f_normalize_or_zero(up);
   v3f front = v3f_normalize_or_zero(look_at_dir);
+  v3f right = v3f_normalize_or_zero(v3f_cross(up, front));
+  up = v3f_normalize_or_zero(up);
 
   m44 result =  {
     right.x, right.y, right.z, -v3f_dot(look_from, right),

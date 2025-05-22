@@ -462,7 +462,7 @@ game_draw(G_State *game, R_State *state)
                                       (signed_dist_left > radius)&&
                                       (signed_dist_top > radius) &&
                                       (signed_dist_bottom > radius)
-                                      );
+                                      ) || 1;
           
           G_Block *block = game->blocks + G_ChunkIndex(block_x, block_y, block_z);
           if ((block->flags & G_BlockFlag_Active) && inside_camera_volume)
@@ -661,19 +661,24 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PSTR lpCmd, int nShowCmd)
     g_update_camera(&game_state.camera, window, input, game_state.player_p, seconds_per_frame);
     
     //v3f light_p = v3f_make(game_state.player_p.x, game_state.player_p.y + 20, game_state.player_p.z - 20);
-    //v3f light_p = v3f_make(20, G_ChunkDims_Y + 20, -20);
-    v3f light_p = v3f_make(20, G_ChunkDims_Y + 4, 15);
-    //v3f light_dir = v3f_make(0.0f, -1.0f, 1.0f);
+    v3f light_p = v3f_make(20, G_ChunkDims_Y + 20, -20);
+    //v3f light_p = v3f_make(30, G_ChunkDims_Y+0, 15);
+    v3f light_dir = v3f_make(0.0f, -1.0f, 1.0f);
     //v3f light_dir = v3f_make(0.0f, -1.0f, 0.0f);
-    //v4f light_intensity = v4f_make(0.7f, 0.7f, 0.7f, 1.0f);
-    v4f light_intensity = v4f_make(4.f, 4.f, 4.f, 1.0f);
+    v4f light_intensity = v4f_make(0.7f, 0.7f, 0.7f, 1.0f);
+    //v4f light_intensity = v4f_make(4.f, 4.f, 4.f, 1.0f);
 
     game_draw(&game_state, &renderer_state);
 
+    game_add_cube(&renderer_state, false, false, false, false, false, false,
+                  v3f_make(30, G_ChunkDims_Y+2, 15),
+                  v3f_make(0.4f, 0.4f, 0.4f),
+                  v4f_make(4,4,4,1));
+
     R_CameraConfig game_camera = camera_config_from_game_camera(game_state.camera);
 
-    //r_set_directional_light(&renderer_state, light_p, light_dir, light_intensity);
-    r_set_point_light(&renderer_state, light_p, light_intensity);
+    r_set_directional_light(&renderer_state, light_p, light_dir, light_intensity);
+    //r_set_point_light(&renderer_state, light_p, light_intensity);
     r_acquire_game_shadow_pass(&renderer_state);
     r_acquire_ssao_pass(&renderer_state, game_camera);
     r_acquire_game_pass(&renderer_state, game_camera, game_state.debug_wire_frame);

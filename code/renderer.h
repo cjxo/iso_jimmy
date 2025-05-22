@@ -132,8 +132,8 @@ typedef struct
 __declspec(align(16)) typedef struct
 {
 	R_Light light;
-  f32 z_far;
   v3f eye_p_in_world;
+  f32 pad_a[1];
 } DX11_PixelShader_Constants;
 
 typedef struct
